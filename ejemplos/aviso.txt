@@ -1,0 +1,20 @@
+Full-Stack Engineer (React + .NET) — Remoto LatAm
+
+Buscamos un/a Full-Stack Engineer semi-senior para sumarse a un equipo de producto.
+
+Requisitos excluyentes:
+- 4+ años de experiencia en desarrollo web
+- React y TypeScript (excluyente)
+- .NET / C# para el backend (excluyente)
+- SQL Server o PostgreSQL
+- Inglés intermedio/avanzado para reuniones con el cliente
+
+Deseables:
+- Next.js
+- Azure y pipelines CI/CD
+- Docker
+- Testing automatizado (Playwright o similar)
+- Experiencia con IA generativa aplicada al desarrollo
+
+Modalidad: 100% remoto, con base en Argentina, Uruguay o Chile.
+Ofrecemos contratación en USD, equipo de 6 personas, revisiones de código y espacio para proponer arquitectura.
