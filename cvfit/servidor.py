@@ -12,11 +12,13 @@ from pathlib import Path
 
 from .adaptar import adaptar
 from .cv import parsear
+from .extraer import ExtraccionError, desde_docx, desde_pdf, estructurar
 from .match import evaluar
 from .plantillas import render
 
 RAIZ = Path(__file__).resolve().parent.parent
 EJEMPLO = RAIZ / "ejemplos" / "cv.md"
+MAXIMO = 12 * 1024 * 1024
 
 APP = """<!doctype html>
 <html lang="es-AR">
@@ -58,6 +60,10 @@ border:6px solid var(--linea)}
 .lista{margin:8px 0 0;padding-left:18px;font-size:13px;color:#c9d6e4}
 .lista li{margin-bottom:4px}
 iframe{width:100%;height:640px;border:1px solid var(--linea);border-radius:12px;background:#fff}
+.zona{border:1px dashed var(--linea);border-radius:10px;padding:10px;background:var(--panel2);margin-bottom:8px}
+.zona.encima{border-color:var(--acento);background:rgba(96,165,250,.1)}
+.zona input{display:block;font-size:12px;color:var(--txt);margin:0 0 6px;max-width:100%}
+.zona small{display:block;line-height:1.4}
 .oculto{display:none}
 small{color:var(--tenue)}
 </style>
@@ -65,11 +71,15 @@ small{color:var(--tenue)}
 <body>
 <header>
   <h1>cv<span>fit</span></h1>
-  <p>Pegá tu CV en Markdown y el aviso. Te dice cuánto respaldás y qué te falta. No inventa: adaptar es reordenar.</p>
+  <p>Arrastrá tu CV (PDF, Word o Markdown) y pegá el aviso. Te dice cuánto respaldás y qué te falta. No inventa: adaptar es reordenar.</p>
 </header>
 <main>
   <div class="panel">
-    <label for="cv">CV (Markdown)</label>
+    <label for="archivo">CV — arrastrá el archivo o pegá el texto</label>
+    <div class="zona" id="zona">
+      <input type="file" id="archivo" accept=".md,.markdown,.txt,.docx,.pdf">
+      <small id="zona-ayuda">Markdown, TXT, Word (.docx) o PDF. Los PDF escaneados (imagen) no se pueden leer: convertilos a Word primero.</small>
+    </div>
     <textarea id="cv" rows="16" placeholder="# Nombre\n**Título**\n\n## EXPERIENCIA\n- ..."></textarea>
     <div class="fila"><button id="ejemplo">Cargar CV de ejemplo</button></div>
 
@@ -116,6 +126,42 @@ $('ejemplo').onclick = async () => {
   $('cv').value = await respuesta.text();
   estado('CV de ejemplo cargado.');
 };
+
+// --- ingesta de archivos: md/txt se leen en el navegador, docx/pdf en el servidor ---
+async function cargarArchivo(archivo) {
+  if (!archivo) return;
+  const nombre = archivo.name.toLowerCase();
+  const liviano = /\\.(md|markdown|txt)$/.test(nombre);
+  estado('Leyendo ' + archivo.name + '…');
+  try {
+    if (liviano) {
+      $('cv').value = await archivo.text();
+    } else {
+      const r = await fetch('/api/extraer?cv=1&nombre=' + encodeURIComponent(archivo.name), {
+        method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: archivo
+      });
+      const datos = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        estado(datos.error || ('No pude leer ' + archivo.name + '.'));
+        return;
+      }
+      $('cv').value = datos.texto;
+    }
+    estado('CV cargado desde ' + archivo.name + ' (' + $('cv').value.length + ' caracteres). Revisalo antes de analizar.');
+  } catch (error) {
+    estado('No pude leer ' + archivo.name + ': ' + error.message);
+  }
+}
+
+$('archivo').onchange = evento => cargarArchivo(evento.target.files[0]);
+const zona = $('zona');
+zona.addEventListener('dragover', evento => { evento.preventDefault(); zona.classList.add('encima'); });
+zona.addEventListener('dragleave', () => zona.classList.remove('encima'));
+zona.addEventListener('drop', evento => {
+  evento.preventDefault();
+  zona.classList.remove('encima');
+  if (evento.dataTransfer.files.length) cargarArchivo(evento.dataTransfer.files[0]);
+});
 
 function pintar(r) {
   $('aro').className = 'aro ' + r.veredicto;
@@ -171,6 +217,11 @@ class Manejador(BaseHTTPRequestHandler):
     def _html(self, texto: str) -> None:
         self._responder(200, texto.encode("utf-8"), "text/html; charset=utf-8")
 
+    def _json(self, codigo: int, cuerpo: dict) -> None:
+        self._responder(
+            codigo, json.dumps(cuerpo, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8"
+        )
+
     def do_GET(self) -> None:
         if self.path in ("/", "/index.html"):
             self._html(APP)
@@ -179,7 +230,50 @@ class Manejador(BaseHTTPRequestHandler):
         else:
             self._responder(404, b"no existe", "text/plain; charset=utf-8")
 
+    def _extraer(self) -> None:
+        """Recibe el archivo binario y devuelve el texto ya listo para el textarea del CV."""
+        from urllib.parse import parse_qs, urlparse
+
+        consulta = parse_qs(urlparse(self.path).query)
+        nombre = (consulta.get("nombre", ["archivo"])[0] or "archivo").strip()
+        para_cv = consulta.get("cv", ["0"])[0] == "1"
+
+        largo = int(self.headers.get("Content-Length", 0))
+        if largo > MAXIMO:
+            self._json(413, {"error": f"el archivo supera {MAXIMO // (1024 * 1024)} MB"})
+            return
+        datos = self.rfile.read(largo)
+        if not datos:
+            self._json(400, {"error": "el archivo está vacío"})
+            return
+
+        sufijo = Path(nombre).suffix.lower()
+        try:
+            if sufijo in (".md", ".markdown", ".txt"):
+                texto = datos.decode("utf-8-sig", "replace")
+            elif sufijo == ".docx":
+                texto = desde_docx(datos)
+            elif sufijo == ".pdf":
+                texto = desde_pdf(datos)
+                if para_cv:
+                    texto = estructurar(texto)
+            else:
+                self._json(400, {"error": f"formato no soportado: {sufijo or 'sin extensión'}"})
+                return
+        except ExtraccionError as error:
+            self._json(400, {"error": str(error)})
+            return
+
+        self._json(200, {"nombre": nombre, "texto": texto})
+
     def do_POST(self) -> None:
+        from urllib.parse import urlparse
+
+        ruta = urlparse(self.path).path
+        if ruta == "/api/extraer":
+            self._extraer()
+            return
+
         largo = int(self.headers.get("Content-Length", 0))
         try:
             datos = json.loads(self.rfile.read(largo) or b"{}")
@@ -193,7 +287,7 @@ class Manejador(BaseHTTPRequestHandler):
         resultado = evaluar(cv, aviso_texto)
         adaptado = adaptar(cv, aviso_texto)
 
-        if self.path == "/api/analizar":
+        if ruta == "/api/analizar":
             cuerpo = {
                 "score": resultado.score,
                 "veredicto": resultado.veredicto,
@@ -206,7 +300,7 @@ class Manejador(BaseHTTPRequestHandler):
                 "cambios": adaptado.cambios,
             }
             self._responder(200, json.dumps(cuerpo, ensure_ascii=False).encode("utf-8"), "application/json")
-        elif self.path == "/api/render":
+        elif ruta == "/api/render":
             html = render(adaptado, datos.get("estilo", "ats"))
             self._html(html)
         else:

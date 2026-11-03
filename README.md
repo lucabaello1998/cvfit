@@ -1,7 +1,7 @@
 # cvfit
 
-**Pegás tu CV y el aviso. Te dice cuánto de ese aviso podés respaldar, qué te falta, y te devuelve el
-CV adaptado — sin inventar una sola línea.**
+**Arrastrás tu CV (PDF, Word o Markdown) y pegás el aviso. Te dice cuánto de ese aviso podés
+respaldar, qué te falta, y te devuelve el CV adaptado — sin inventar una sola línea.**
 
 Corre local: tu CV no sale de tu máquina.
 
@@ -17,7 +17,7 @@ Y al revés: se postula a 30 búsquedas sin saber que en 20 el requisito excluye
 ## Qué hace
 
 ```
-CV.md  +  aviso.txt  →  cobertura  →  gaps  →  CV adaptado en 3 estilos
+CV.pdf|.docx|.md  +  aviso.txt  →  cobertura  →  gaps  →  CV adaptado en 3 estilos
 ```
 
 | Salida | Qué es |
@@ -45,13 +45,19 @@ No hay LLM en el camino crítico: son reglas explícitas y auditables. Cada punt
 python -m cvfit.servidor        # http://localhost:8765
 ```
 
-Pegás el CV en Markdown a la izquierda, el aviso a la derecha, y ves el puntaje, los gaps y la
-previsualización del CV adaptado (con selector de estilo e impresión a PDF).
+Arrastrás el CV a la zona de archivo (**Markdown, TXT, Word `.docx` o PDF**) o lo pegás como texto a
+la izquierda, el aviso a la derecha, y ves el puntaje, los gaps y la previsualización del CV adaptado
+(con selector de estilo e impresión a PDF).
+
+La extracción de `.docx` y `.pdf` la hace el propio programa con la biblioteca estándar: `zipfile` +
+XML para Word, y descompresión de streams + mapa `ToUnicode` para PDF. No hay dependencias ni
+servicio externo, así que el CV tampoco sale de la máquina al subirlo.
 
 ### Por consola
 
 ```bash
 python -m cvfit.analizar --cv ejemplos/cv.md --aviso ejemplos/aviso.txt --estilo ats --salida cv.html
+python -m cvfit.analizar --cv ~/Downloads/CV.pdf --aviso aviso.txt --estilo ats --salida cv.html
 ```
 
 ```
@@ -68,7 +74,7 @@ distinto en el CV:
 
 ## El CV de entrada
 
-Markdown simple, el que ya usás:
+Un archivo `.md`, `.txt`, `.docx` o `.pdf` — el formato que ya tengas. En Markdown:
 
 ```markdown
 # Nombre Apellido
@@ -101,15 +107,33 @@ negrita dentro de un puesto abren un subtítulo, así los bullets quedan debajo 
   y escribe el mensaje; la postulación la apretás vos.
 - No traduce el CV. Si el aviso está en inglés, el CV tiene que estar en inglés antes de entrar.
 
+## Límites de la extracción de PDF
+
+El PDF es el formato más hostil que existe. Acá se lee con la biblioteca estándar y sin OCR:
+
+| Caso | Qué pasa |
+|---|---|
+| PDF exportado desde Word / Google Docs / LaTeX | Funciona: se leen los `ToUnicode` de cada fuente |
+| PDF con fuentes sin mapa de caracteres | **Se rechaza con un mensaje claro** en vez de devolver texto basura |
+| PDF escaneado (una foto) | Se rechaza: no hay texto, haría falta OCR |
+| PDF a dos columnas | El texto sale, pero el orden puede mezclar las columnas: revisalo en el textarea |
+| PDF con contraseña | Se rechaza |
+
+La regla es la misma que en el resto del proyecto: si no se puede leer, se dice. Nunca se adivina.
+Un `.docx` exportado desde Word es la opción más confiable para un CV con diseño.
+
+Los acentos y el separador `·` pueden salir cambiados en PDFs con varias fuentes: el texto queda en
+el textarea para que lo corrijas antes de analizar.
+
 ## Tests
 
 ```bash
-python -m pytest -q      # 24 tests
+python -m pytest -q      # 37 tests
 ```
 
 Cubren el parser, la detección de requisitos (incluidos los falsos positivos típicos: "reactiva" no
-es React, "go" no es Go), el encaje, la regla anti-invención y que la plantilla ATS no emita tablas
-ni grillas.
+es React, "go" no es Go), el encaje, la regla anti-invención, que la plantilla ATS no emita tablas
+ni grillas, y la extracción de archivos con un `.docx` y un PDF armados a mano en el propio test.
 
 ## Licencia
 

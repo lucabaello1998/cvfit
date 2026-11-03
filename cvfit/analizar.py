@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from .adaptar import adaptar
-from .cv import cargar
+from .cv import cargar, parsear
+from .extraer import ExtraccionError, estructurar, extraer_desde_archivo
 from .match import evaluar
 from .plantillas import NOMBRES, render
 
@@ -17,15 +19,29 @@ VEREDICTOS = {
 }
 
 
+def leer_cv(ruta):
+    """Acepta .md/.txt/.docx/.pdf. Un PDF se estructura a Markdown antes de parsear."""
+    if ruta.suffix.lower() == ".pdf":
+        return parsear(estructurar(extraer_desde_archivo(ruta)))
+    if ruta.suffix.lower() == ".docx":
+        return parsear(extraer_desde_archivo(ruta))
+    return cargar(ruta)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cvfit", description="Encaje CV ↔ aviso y CV adaptado")
-    parser.add_argument("--cv", required=True, type=Path, help="CV en Markdown")
+    parser.add_argument("--cv", required=True, type=Path, help="CV en .md, .txt, .docx o .pdf")
     parser.add_argument("--aviso", required=True, type=Path, help="texto del aviso")
     parser.add_argument("--estilo", default="ats", choices=sorted(NOMBRES))
     parser.add_argument("--salida", type=Path, help="archivo HTML de salida")
     args = parser.parse_args(argv)
 
-    cv = cargar(args.cv)
+    try:
+        cv = leer_cv(args.cv)
+    except ExtraccionError as error:
+        print(f"no pude leer {args.cv.name}: {error}", file=sys.stderr)
+        return 2
+
     aviso = args.aviso.read_text(encoding="utf-8")
     resultado = evaluar(cv, aviso)
     adaptado = adaptar(cv, aviso)
