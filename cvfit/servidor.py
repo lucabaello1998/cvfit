@@ -72,6 +72,13 @@ letter-spacing:.06em;padding:0 8px 6px;border-bottom:1px solid var(--linea)}
 .tabla tr.gana td{color:var(--ok)}
 .tabla td.num{white-space:nowrap}
 button.mini{padding:3px 9px;font-size:12px;border-radius:8px}
+.retoques{border:1px solid var(--linea);border-radius:12px;padding:12px;margin-top:12px;background:var(--panel2)}
+.rejilla{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end}
+@media(max-width:560px){.rejilla{grid-template-columns:1fr}}
+.rejilla label{margin-bottom:4px}
+input[type=color]{width:46px;height:34px;padding:2px;border:1px solid var(--linea);border-radius:8px;background:var(--panel)}
+input[type=file]{font-size:11px;color:var(--tenue);max-width:100%}
+.miniatura{width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid var(--acento);display:block}
 .oculto{display:none}
 small{color:var(--tenue)}
 </style>
@@ -102,6 +109,43 @@ small{color:var(--tenue)}
       </select>
       <button class="principal" id="analizar">Analizar y adaptar</button>
       <button id="imprimir">Imprimir / PDF</button>
+    </div>
+
+    <div class="retoques">
+      <label style="margin-bottom:8px">Retoques del CV</label>
+      <div class="rejilla">
+        <div>
+          <label for="foto">Foto</label>
+          <input type="file" id="foto" accept="image/png,image/jpeg,image/webp">
+          <div class="fila" style="margin-top:6px">
+            <img id="miniatura" class="miniatura oculto" alt="">
+            <button id="quitar-foto" class="mini oculto">Quitar</button>
+          </div>
+        </div>
+        <div>
+          <label for="acento">Color</label>
+          <div class="fila" style="margin-top:0">
+            <input type="color" id="acento" value="#1f5f8b">
+            <button id="neutro" class="mini">Neutro</button>
+          </div>
+        </div>
+        <div>
+          <label for="escala">Tamaño</label>
+          <select id="escala">
+            <option value="0.9">Chico</option>
+            <option value="1" selected>Normal</option>
+            <option value="1.1">Grande</option>
+            <option value="1.2">Muy grande</option>
+          </select>
+        </div>
+      </div>
+      <small>La foto se incrusta en el HTML: no se sube a ningún lado. En ATS los filtros leen texto, así
+      que foto y color no suman (y a veces restan).</small>
+    </div>
+
+    <div class="fila">
+      <button id="editar">Editar el CV</button>
+      <button id="descargar">Descargar .html</button>
     </div>
     <p style="margin:10px 0 0"><small id="estado"></small></p>
   </div>
@@ -257,17 +301,26 @@ function pintar(r) {
 }
 
 async function actualizar(renderizar) {
-  const cuerpo = JSON.stringify({cv: $('cv').value, aviso: $('aviso').value});
-  const r = await fetch('/api/analizar', {method:'POST', headers:{'Content-Type':'application/json'}, body: cuerpo});
+  const cv = $('cv').value, aviso = $('aviso').value;
+  const r = await fetch('/api/analizar', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({cv: cv, aviso: aviso})});
   const datos = await r.json();
   pintar(datos);
-  if (renderizar) {
-    const p = await fetch('/api/render', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({cv: $('cv').value, aviso: $('aviso').value, estilo: $('estilo').value})
-    });
-    $('preview').srcdoc = await p.text();
-  }
+  if (renderizar) await pintarPreview();
+}
+
+function ajustes() {
+  return {
+    cv: $('cv').value, aviso: $('aviso').value, estilo: $('estilo').value,
+    foto: fotoData, acento: $('acento').value, escala: $('escala').value
+  };
+}
+
+async function pintarPreview() {
+  const p = await fetch('/api/render', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(ajustes())
+  });
+  $('preview').srcdoc = await p.text();
 }
 
 $('analizar').onclick = async () => {
@@ -277,8 +330,96 @@ $('analizar').onclick = async () => {
   await actualizar(true);
   estado('Listo. Revisá los gaps y el CV adaptado.');
 };
-$('estilo').onchange = () => actualizar(true);
+$('estilo').onchange = () => {
+  ajustarColorPorEstilo();
+  actualizar(true);
+};
 $('imprimir').onclick = () => { $('preview').contentWindow.print(); };
+
+// --- retoques: foto, color y tamaño (todo local: la foto se incrusta como data URI) ---
+let fotoData = '';
+let colorManual = false;
+const COLOR_POR_ESTILO = {ats: '#000000', clasico: '#1f5f8b', compacto: '#111827'};
+
+function ajustarColorPorEstilo() {
+  if (!colorManual) $('acento').value = COLOR_POR_ESTILO[$('estilo').value] || '#1f5f8b';
+}
+ajustarColorPorEstilo();
+
+$('foto').onchange = evento => {
+  const archivo = evento.target.files[0];
+  if (!archivo) return;
+  if (archivo.size > 2 * 1024 * 1024) {
+    estado('La foto pasa los 2 MB: usá una más liviana o recortala.');
+    return;
+  }
+  const lector = new FileReader();
+  lector.onload = async () => {
+    fotoData = lector.result;
+    $('miniatura').src = fotoData;
+    $('miniatura').classList.remove('oculto');
+    $('quitar-foto').classList.remove('oculto');
+    await actualizar(true);
+    estado('Foto cargada (' + Math.round(archivo.size / 1024) + ' KB). Se imprime con el CV.');
+  };
+  lector.readAsDataURL(archivo);
+};
+
+$('quitar-foto').onclick = async () => {
+  fotoData = '';
+  $('miniatura').src = '';
+  $('miniatura').classList.add('oculto');
+  $('quitar-foto').classList.add('oculto');
+  $('foto').value = '';
+  await actualizar(true);
+  estado('Foto quitada.');
+};
+
+let temporizadorColor;
+$('acento').oninput = () => {
+  colorManual = true;
+  clearTimeout(temporizadorColor);
+  temporizadorColor = setTimeout(() => actualizar(true), 220);
+};
+$('neutro').onclick = () => {
+  colorManual = true;
+  $('acento').value = COLOR_POR_ESTILO[$('estilo').value] || '#111827';
+  actualizar(true);
+};
+$('escala').onchange = () => actualizar(true);
+
+// --- edición directa del CV adaptado + descarga ---
+let editando = false;
+$('editar').onclick = () => {
+  const doc = $('preview').contentDocument;
+  const hoja = doc && doc.querySelector('.hoja');
+  if (!hoja) { estado('Primero analizá el CV.'); return; }
+  if (editando) {
+    hoja.contentEditable = 'false';
+    hoja.style.outline = '';
+  } else {
+    hoja.contentEditable = 'true';
+    hoja.style.outline = '2px dashed #60a5fa';
+    hoja.style.outlineOffset = '6px';
+  }
+  editando = !editando;
+  $('editar').textContent = editando ? 'Terminar edición' : 'Editar el CV';
+  estado(editando
+    ? 'Podés tocar el CV en la previsualización: lo que dejes así es lo que se imprime y se descarga.'
+    : 'Edición terminada. Si cambiás de estilo, de color o analizás de nuevo, el CV se regenera.');
+};
+
+$('descargar').onclick = () => {
+  const doc = $('preview').contentDocument;
+  if (!doc || !doc.querySelector('.hoja')) { estado('Primero analizá el CV.'); return; }
+  const html = '<!doctype html>' + doc.documentElement.outerHTML;
+  const enlace = document.createElement('a');
+  enlace.href = URL.createObjectURL(new Blob([html], {type: 'text/html;charset=utf-8'}));
+  enlace.download = 'cv.html';
+  enlace.click();
+  setTimeout(() => URL.revokeObjectURL(enlace.href), 2000);
+  estado('Descargado: cv.html (abrilo e imprimí a PDF desde el navegador).');
+};
 </script>
 </body>
 </html>
@@ -418,7 +559,13 @@ class Manejador(BaseHTTPRequestHandler):
             }
             self._responder(200, json.dumps(cuerpo, ensure_ascii=False).encode("utf-8"), "application/json")
         elif ruta == "/api/render":
-            html = render(adaptado, datos.get("estilo", "ats"))
+            html = render(
+                adaptado,
+                datos.get("estilo", "ats"),
+                foto=datos.get("foto"),
+                acento=datos.get("acento"),
+                escala=datos.get("escala"),
+            )
             self._html(html)
         else:
             self._responder(404, b"no existe", "text/plain")

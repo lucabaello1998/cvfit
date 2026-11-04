@@ -10,7 +10,7 @@ from .adaptar import adaptar
 from .comparar import comparar
 from .cv import cargar, parsear
 from .extraer import ExtraccionError, estructurar, extraer_desde_archivo
-from .plantillas import NOMBRES, render
+from .plantillas import NOMBRES, foto_desde_archivo, render
 
 VEREDICTOS = {
     "alta": "Encaje alto: podés respaldar casi todo lo que pide el aviso.",
@@ -55,8 +55,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--aviso", required=True, type=Path, help="texto del aviso")
     parser.add_argument("--estilo", default="ats", choices=sorted(NOMBRES))
+    parser.add_argument("--foto", type=Path, help="foto de perfil (.png, .jpg o .webp) para el encabezado")
+    parser.add_argument("--acento", help="color de acento en hex, por ejemplo #1f5f8b")
+    parser.add_argument("--escala", type=float, help="tamaño de letra: 0.9 a 1.3 (1 = normal)")
     parser.add_argument("--salida", type=Path, help="archivo HTML de salida")
     args = parser.parse_args(argv)
+
+    foto = ""
+    if args.foto:
+        try:
+            foto = foto_desde_archivo(args.foto)
+        except (OSError, ValueError) as error:
+            print(f"foto: {error}", file=sys.stderr)
+            return 2
 
     cvs = {}
     for ruta in args.cv:
@@ -101,7 +112,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  · {cambio}")
 
     if args.salida:
-        args.salida.write_text(render(adaptado, args.estilo), encoding="utf-8")
+        html = render(adaptado, args.estilo, foto=foto, acento=args.acento, escala=args.escala)
+        args.salida.write_text(html, encoding="utf-8")
         print(f"\nescrito: {args.salida}  (estilo {args.estilo})")
     return 0
 

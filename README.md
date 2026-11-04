@@ -27,6 +27,7 @@ CV.pdf|.docx|.md  +  aviso.txt  →  cobertura  →  gaps  →  CV adaptado en 3
 | **Observaciones** | Lo que no es tecnología pero decide: años, inglés, modalidad, seniority |
 | **CV adaptado** | Reordenado por relevancia, con resumen reescrito y recorte de bullets |
 | **Estilos** | `ats` (una columna, sin tablas), `clasico` (una columna con acento), `compacto` (dos columnas) |
+| **Retoques** | Foto de perfil, color de acento, tamaño de letra y edición directa antes de imprimir |
 
 ¿Tenés varias versiones del CV? Se sueltan juntas contra el mismo aviso y sale el ranking de cuál
 encaja mejor — ver [Varios CVs contra el mismo aviso](#varios-cvs-contra-el-mismo-aviso).
@@ -91,6 +92,10 @@ ilegible se saltea con el motivo en vez de tumbar la corrida.
 ```bash
 python -m cvfit.analizar --cv ejemplos/cv.md --aviso ejemplos/aviso.txt --estilo ats --salida cv.html
 python -m cvfit.analizar --cv ~/Downloads/CV.pdf --aviso aviso.txt --estilo ats --salida cv.html
+
+# con retoques
+python -m cvfit.analizar --cv CV.pdf --aviso aviso.txt --estilo clasico \
+  --foto ~/fotos/perfil.jpg --acento "#0f766e" --escala 1.1 --salida cv.html
 ```
 
 ```
@@ -104,6 +109,30 @@ distinto en el CV:
   · RESULTADOS DESTACADOS: 7 → 4 bullets
   · Desarrollador Fullstack — Grupo CETA: 13 → 4 bullets
 ```
+
+## Foto, color y edición
+
+El CV adaptado no es un PDF cerrado: se puede terminar de ajustar antes de mandarlo.
+
+| Retoque | Interfaz | Consola |
+|---|---|---|
+| **Foto de perfil** | subís la imagen y aparece en el encabezado; se incrusta como data URI | `--foto perfil.jpg` |
+| **Color de acento** | selector de color + botón Neutro | `--acento "#0f766e"` |
+| **Tamaño de letra** | Chico / Normal / Grande / Muy grande (0,9 a 1,2) | `--escala 1.1` |
+| **Edición fina** | botón *Editar el CV*: se toca el texto en la previsualización | — |
+| **Descarga** | *Descargar .html* con lo editado | `--salida cv.html` |
+
+La foto se lee en el navegador y se incrusta en el HTML: no se sube a ningún servidor, igual que el
+resto del CV. Se aceptan `png`, `jpg` y `webp`, hasta 2 MB; el resto se descarta.
+
+Detalles que sí importan:
+
+- Sin foto ni color, el estilo ATS sale exactamente como antes: una columna, negro, sin adornos.
+- En ATS la foto va en escala de grises y recortada en cuadrado; los filtros leen texto, así que la
+  foto y el color no suman (y a veces restan). La interfaz lo dice.
+- El color es un hex validado (`#rrggbb`); cualquier otra cosa se ignora en vez de inyectarse en el CSS.
+- La edición es directa sobre el HTML: lo que queda en la previsualización es lo que se imprime y se
+  descarga. Si cambiás de estilo, color o volvés a analizar, el CV se regenera y la edición se pierde.
 
 ## El CV de entrada
 
@@ -163,7 +192,7 @@ Un `.docx` exportado desde Word es la opción más confiable para un CV con dise
 ## Tests
 
 ```bash
-python -m pytest -q      # 53 tests
+python -m pytest -q      # 66 tests
 ```
 
 Cubren el parser, la detección de requisitos (incluidos los falsos positivos típicos: "reactiva" no
@@ -171,7 +200,8 @@ es React, "go" no es Go), el encaje, la regla anti-invención, que la plantilla 
 ni grillas, y la extracción de archivos con un `.docx` y PDFs armados a mano en el propio test —
 incluido el caso de un PDF que escribe cada palabra en un bloque aparte. La comparación de varios
 CVs tiene sus propios tests: orden, desempate, un archivo ilegible que no tumba la corrida y el
-ganador escrito por la CLI.
+ganador escrito por la CLI. Los retoques también: que una foto que no es imagen se descarte, que un
+color inválido no llegue al CSS y que la escala se recorte a un rango usable.
 
 ## Licencia
 
