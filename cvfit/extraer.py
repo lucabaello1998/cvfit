@@ -9,6 +9,8 @@ lo dice en vez de inventar un CV.
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import io
 import re
 import zipfile
@@ -18,7 +20,9 @@ SOPORTADOS = {".md", ".markdown", ".txt", ".docx", ".pdf"}
 PDF_STREAM = re.compile(rb"stream\r?\n(.*?)endstream", re.S)
 NUMERO = rb"-?\d+(?:\.\d+)?"
 TOKEN = re.compile(
-    rb"\((?:[^()\\]|\\.)*\)" rb"|<[0-9A-Fa-f\s]+>" rb"|" + NUMERO + rb"|TJ|Tj|T\*|Td|TD|Tm|ET|BT|'|\"|\[|\]"
+    rb"\((?:[^()\\]|\\.)*\)"
+    rb"|<[0-9A-Fa-f\s]+>"
+    rb"|" + NUMERO + rb"|TJ|Tj|T\*|Td|TD|Tm|Tf|TL|ET|BT|'|\"|\[|\]"
 )
 PALABRAS_COMUNES = frozenset(
     [
@@ -164,7 +168,6 @@ def desde_pdf(datos: bytes) -> str:
 
 def _descomprimir(crudo: bytes) -> bytes:
     """FlateDecode y/o ASCII85Decode. Si no reconoce el filtro, devuelve los bytes tal cual."""
-    import base64
     import zlib
 
     datos = crudo.strip(b"\r\n")
@@ -249,54 +252,130 @@ def _mapear(bruto: bytes, cmap: dict[str, str], ancho: int) -> str:
 
 
 def _texto_de_stream(cuerpo: bytes, cmap: dict[str, str]) -> str:
+    """Reconstruye el texto por coordenadas, no por orden de escritura.
+
+    Un PDF no escribe "líneas": escribe bloques sueltos. Un cambio de negrita, un bullet o una
+    palabra en otro color es un bloque nuevo con su propia posición. Cortar línea en cada bloque
+    deja una palabra por renglón. Acá se junta todo lo que comparte altura (y) y después se ordena
+    de izquierda a derecha, que es como lo lee un humano.
+    """
     ancho = _ancho_de_codigo(cmap)
-    lineas: list[str] = []
-    actual: list[str] = []
+    corridas: list[tuple[float, float, str, float]] = []  # (y, x, texto, tamaño)
+
+    x = y = 0.0
+    tamano = 10.0
+    leading = 0.0
+    girado = False  # `1 0 0 -1 ... cm`: la y crece hacia abajo
     numeros: list[bytes] = []
     en_arreglo = False
+    buffer: list[str] = []
+    inicio: tuple[float, float] | None = None
 
-    def volcar() -> None:
-        if actual:
-            lineas.append("".join(actual))
-            actual.clear()
+    def cerrar() -> None:
+        nonlocal buffer, inicio
+        if buffer and inicio is not None:
+            texto = "".join(buffer)
+            if texto.strip():
+                corridas.append((inicio[0], inicio[1], texto, tamano))
+        buffer = []
+        inicio = None
+
+    def agregar(texto: str) -> None:
+        nonlocal inicio
+        if inicio is None:
+            inicio = (y, x)
+        buffer.append(texto)
 
     for token in TOKEN.findall(cuerpo):
         if token[:1].isdigit() or token[:1] == b"-":
             numeros.append(token)
             # dentro de un TJ, un salto negativo grande es un espacio entre palabras
             if en_arreglo and float(token) <= -120:
-                actual.append(" ")
+                agregar(" ")
             continue
 
         if token.startswith(b"("):
-            actual.append(_mapear(_decodificar_pdf(token[1:-1]), cmap, ancho))
+            agregar(_mapear(_decodificar_pdf(token[1:-1]), cmap, ancho))
         elif token.startswith(b"<"):
             hexadecimal = re.sub(rb"\s+", b"", token[1:-1]).decode("ascii", "ignore").lower()
             if len(hexadecimal) % 2:
                 hexadecimal = hexadecimal[:-1]
             bruto = bytes.fromhex(hexadecimal)
-            if cmap:
-                actual.append(_mapear(bruto, cmap, ancho))
-            else:
-                actual.append(_a_texto(bruto))
+            agregar(_mapear(bruto, cmap, ancho) if cmap else _a_texto(bruto))
         elif token == b"[":
             en_arreglo = True
         elif token == b"]":
             en_arreglo = False
-        elif token in (b"T*", b"'", b'"', b"ET"):
-            volcar()
+        elif token == b"Tf" and numeros:
+            with contextlib.suppress(ValueError):
+                tamano = float(numeros[-1])
             numeros.clear()
-        elif token in (b"Td", b"TD"):
-            # Td con desplazamiento vertical = línea nueva; con sólo tx = sigue la misma línea
-            if len(numeros) >= 2 and float(numeros[-1]) != 0:
-                volcar()
+        elif token == b"TL" and numeros:
+            with contextlib.suppress(ValueError):
+                leading = float(numeros[-1])
             numeros.clear()
-        elif token in (b"Tm", b"BT"):
-            volcar()
+        elif token == b"Tm" and len(numeros) >= 6:
+            if inicio is not None:
+                cerrar()
+            matriz = numeros[-6:]
+            try:
+                x, y = float(matriz[4]), float(matriz[5])
+                girado = float(matriz[3]) < 0
+            except ValueError:
+                pass
+            numeros.clear()
+        elif token in (b"Td", b"TD") and len(numeros) >= 2:
+            desplazamiento_x, desplazamiento_y = float(numeros[-2]), float(numeros[-1])
+            if desplazamiento_y != 0 and inicio is not None:
+                cerrar()  # se movió de renglón
+            x += desplazamiento_x
+            y += desplazamiento_y
+            if token == b"TD":
+                leading = -desplazamiento_y
+            numeros.clear()
+        elif token in (b"T*", b"'", b'"'):
+            cerrar()
+            paso = leading or tamano * 1.2
+            y += paso if girado else -paso
+            x = 0.0
+            numeros.clear()
+        elif token in (b"ET", b"BT"):
+            cerrar()
             numeros.clear()
 
-    volcar()
-    return "\n".join(linea.rstrip() for linea in lineas if linea.strip())
+    cerrar()
+
+    if not corridas:
+        return ""
+
+    sentido = 1 if girado else -1
+    corridas.sort(key=lambda corrida: (sentido * corrida[0], corrida[1]))
+
+    lineas: list[list[tuple[float, float, str, float]]] = []
+    for corrida in corridas:
+        if lineas and abs(corrida[0] - lineas[-1][0][0]) <= max(2.0, corrida[3] * 0.4):
+            lineas[-1].append(corrida)
+        else:
+            lineas.append([corrida])
+
+    unidas: list[str] = []
+    for linea in lineas:
+        unidas.extend(_unir_linea(linea))
+    return "\n".join(linea for linea in unidas if linea.strip())
+
+
+def _unir_linea(corrida: list[tuple[float, float, str, float]]) -> list[str]:
+    """Une las corridas de una misma altura, de izquierda a derecha.
+
+    Cada corrida es un bloque de texto independiente del PDF (un cambio de negrita, un bullet, una
+    celda). Entre bloques va un espacio; nunca se pegan dos palabras.
+    """
+    partes: list[str] = []
+    for _, _, texto, _ in sorted(corrida, key=lambda c: c[1]):
+        if partes and texto[:1] not in ".,;:)]!?" and not partes[-1].endswith((" ", "(", "-")):
+            partes.append(" ")
+        partes.append(texto)
+    return ["".join(partes).rstrip()]
 
 
 def _a_texto(bruto: bytes) -> str:
@@ -354,6 +433,7 @@ SECCIONES_CONOCIDAS = (
 
 
 PAGINA = re.compile(r"^(p[áa]gina|page|p[áa]g\.?)\s*\d+(\s*(de|of)\s*\d+)?$", re.IGNORECASE)
+PAGINA_EN_LINEA = re.compile(r"\b(p[áa]gina|page)\s+\d+(\s*(de|of)\s*\d+)?", re.IGNORECASE)
 TELEFONO = re.compile(r"^[\d\s()+.-]{7,}$")
 
 
@@ -368,18 +448,59 @@ def _parece_nombre(linea: str) -> bool:
     return all(palabra[:1].isupper() and palabra.replace("-", "").replace("'", "").isalpha() for palabra in palabras)
 
 
+def _sin_tildes(texto: str) -> str:
+    return texto.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+
+
+def _es_titulo(limpia: str) -> bool:
+    """¿Esta línea es el título de una sección?
+
+    1) Empieza con un nombre conocido ("EXPERIENCIA PROFESIONAL DESTACADA").
+    2) Es corta, en mayúsculas y sin punto final: así titulan los CVs exportados de Word/Canva
+       ("MÉTRICAS DE IMPACTO PRODUCTIVO"). Sin esto, el contenido se acumula en la sección anterior.
+    """
+    bajo = _sin_tildes(limpia.lower().strip(" :|"))
+    if any(
+        bajo == seccion or (bajo.startswith(seccion + " ") and len(limpia) <= 45 and not limpia.endswith("."))
+        for seccion in SECCIONES_CONOCIDAS
+    ):
+        return True
+
+    palabras = limpia.split()
+    return 2 <= len(palabras) <= 7 and len(limpia) <= 60 and not limpia.endswith((".", ",", ";")) and limpia.isupper()
+
+
+def _es_conocida(limpia: str) -> bool:
+    bajo = _sin_tildes(limpia.lower().strip(" :|"))
+    return any(bajo == seccion or bajo.startswith(seccion + " ") for seccion in SECCIONES_CONOCIDAS)
+
+
+def _partir_encabezado(limpia: str) -> list[str]:
+    """'EDUCACIÓN ACADÉMICA IDIOMAS & COMUNICACIÓN' son dos títulos en columnas distintas."""
+    plano = _sin_tildes(limpia.lower())
+    for nombre in ("idiomas", "proyectos", "perfil", "experiencia", "educacion", "skills", "stack", "resumen"):
+        posicion = plano.find(" " + nombre)
+        if posicion > 0 and limpia[:posicion].strip(" :|—-"):
+            izquierda = limpia[:posicion].strip(" :|—-")
+            if _es_conocida(izquierda):
+                return [izquierda, limpia[posicion:].strip(" :|—-")]
+    return [limpia]
+
+
 def estructurar(texto: str) -> str:
     """Convierte texto plano (PDF) en el Markdown que entiende el parser.
 
-    Es heurística y conservadora: sólo promueve a sección las líneas que son un título conocido,
-    y a bullet las que ya venían con viñeta. Los pies de página ("Página 1") se descartan, y el
-    nombre se busca entre las primeras líneas en vez de tomar la primera a ciegas.
+    Es heurística y conservadora: promueve a sección los títulos conocidos y las líneas cortas en
+    mayúsculas, y a bullet las que ya venían con viñeta. Los pies de página ("Página 1") se
+    descartan, y el nombre se busca entre las primeras líneas en vez de tomar la primera a ciegas.
     """
     lineas = [linea.rstrip() for linea in texto.splitlines()]
     lineas = [linea for linea in lineas if not PAGINA.match(linea.strip())]
+    lineas = [re.sub(r"\s{2,}", " ", PAGINA_EN_LINEA.sub("", linea)).strip() for linea in lineas]
 
     salida: list[str] = []
     nombre_puesto = False
+    nombre_detectado = ""
 
     for indice, linea in enumerate(lineas):
         limpia = linea.strip()
@@ -387,17 +508,16 @@ def estructurar(texto: str) -> str:
             salida.append("")
             continue
 
-        bajo = limpia.lower().strip(" :|")
-        sin_tildes = bajo.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
-        es_seccion = any(
-            sin_tildes == seccion
-            or (sin_tildes.startswith(seccion + " ") and len(limpia) <= 30 and not limpia.endswith("."))
-            for seccion in SECCIONES_CONOCIDAS
-        )
+        # cabecera repetida de la página siguiente: "Luca Baello — CV Extendido"
+        if nombre_detectado and limpia.startswith(nombre_detectado) and len(limpia) > len(nombre_detectado) + 10:
+            continue
+
+        es_seccion = _es_titulo(limpia)
 
         if not nombre_puesto and not es_seccion:
             if _parece_nombre(limpia):
                 salida.append(f"# {limpia}")
+                nombre_detectado = limpia
                 nombre_puesto = True
                 continue
             if indice < 5 and not TELEFONO.match(limpia) and "@" not in limpia:
@@ -405,7 +525,7 @@ def estructurar(texto: str) -> str:
                 continue
 
         if es_seccion:
-            salida.append(f"## {limpia.upper()}")
+            salida.extend(f"## {titulo.upper()}" for titulo in _partir_encabezado(limpia))
             continue
 
         if re.match(r"^[•‣▪·\-*]\s+", limpia):
@@ -420,4 +540,29 @@ def estructurar(texto: str) -> str:
                 salida[posicion] = f"# {linea.lstrip('# ').strip()}"
                 break
 
-    return "\n".join(salida)
+    return "\n".join(_desenvolver(salida))
+
+
+def _continua(anterior: str, actual: str) -> bool:
+    """¿`actual` es la continuación de un renglón cortado por el ancho de la página?"""
+    if not anterior.strip() or not actual.strip():
+        return False
+    if anterior.startswith("#") or actual.startswith(("#", "- ")):
+        return False
+    if len(anterior) < 40:
+        return False
+    if anterior.startswith("- "):
+        return actual[:1].islower() or actual[:1] in "([¿¡"  # el bullet sigue aunque haya punto
+    if not actual[:1].islower():
+        return False
+    return not anterior.rstrip().endswith((".", "!", "?", ":", ";"))
+
+
+def _desenvolver(lineas: list[str]) -> list[str]:
+    salida: list[str] = []
+    for linea in lineas:
+        if salida and _continua(salida[-1], linea):
+            salida[-1] = salida[-1].rstrip() + " " + linea.strip()
+        else:
+            salida.append(linea)
+    return salida

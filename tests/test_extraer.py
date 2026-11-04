@@ -13,6 +13,22 @@ from cvfit.extraer import ExtraccionError, desde_docx, desde_pdf, estructurar, e
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
+def _pdf_posicionado(runs: list[tuple[float, float, str]]) -> bytes:
+    """PDF donde cada corrida tiene su propia posición, como los que exporta Word o LibreOffice."""
+    operadores = b""
+    for x, y, texto in runs:
+        operadores += b"BT 1 0 0 1 " + f"{x} {y}".encode() + b" Tm /F1 10 Tf ("
+        operadores += texto.encode("cp1252") + b") Tj ET\n"
+    comprimido = zlib.compress(operadores)
+    return (
+        b"%PDF-1.4\n1 0 obj\n<< /Length "
+        + str(len(comprimido)).encode()
+        + b" /Filter /FlateDecode >>\nstream\n"
+        + comprimido
+        + b"\nendstream\nendobj\ntrailer\n<<>>\n%%EOF\n"
+    )
+
+
 def _docx(parrafos: list[tuple[str, str]]) -> bytes:
     """Arma un .docx mínimo: (estilo, texto) por párrafo."""
     from xml.sax.saxutils import escape
@@ -154,6 +170,89 @@ def test_estructurar_descarta_pies_de_pagina_y_elige_el_nombre():
     markdown = estructurar(crudo)
     assert markdown.splitlines()[1] == "# Luca Nicolas Baello"
     assert "Pagina 1" not in markdown
+
+
+def test_pdf_reconstruye_lineas_por_coordenadas_y_no_por_bloque():
+    texto = desde_pdf(
+        _pdf_posicionado(
+            [
+                (40, 700, "Desarrollador Full Stack SSR"),
+                (230, 700, "React y .NET"),
+                (40, 680, "Segunda linea del curriculum"),
+                (40, 660, "Tercera linea del curriculum"),
+            ]
+        )
+    )
+    lineas = [linea for linea in texto.splitlines() if linea.strip()]
+    assert len(lineas) == 3
+    assert lineas[0] == "Desarrollador Full Stack SSR React y .NET"
+    assert lineas[2] == "Tercera linea del curriculum"
+
+
+def test_pdf_con_corridas_en_distinta_altura_no_las_mezcla():
+    texto = desde_pdf(
+        _pdf_posicionado(
+            [
+                (40, 700, "Primera linea con texto suficiente para pasar el filtro"),
+                (40, 540, "Segunda linea muy lejos de la primera, en otra zona"),
+            ]
+        )
+    )
+    lineas = [linea for linea in texto.splitlines() if linea.strip()]
+    assert lineas == [
+        "Primera linea con texto suficiente para pasar el filtro",
+        "Segunda linea muy lejos de la primera, en otra zona",
+    ]
+
+
+def test_estructurar_desenvuelve_renglones_cortados_por_el_ancho():
+    crudo = "\n".join(
+        [
+            "Luca Baello",
+            "PERFIL",
+            "Desarrollador con cinco años de trayectoria construyendo sistemas",
+            "productivos y escalables de punta a punta.",
+            "EXPERIENCIA",
+            "- Logro importante que se corta por el ancho de la página y continúa",
+            "en el renglón siguiente.",
+        ]
+    )
+    markdown = estructurar(crudo)
+    assert "construyendo sistemas productivos y escalables de punta a punta." in markdown
+    assert "por el ancho de la página y continúa en el renglón siguiente." in markdown
+
+
+def test_estructurar_saca_el_pie_de_pagina_embebido():
+    markdown = estructurar("Luca Baello\nCV Extendido Página 2 de 2\nEXPERIENCIA")
+    assert "Página" not in markdown
+    assert "CV Extendido" in markdown
+
+
+def test_estructurar_no_parte_un_titulo_que_empieza_con_otra_cosa():
+    markdown = estructurar("Luca Baello\nOTRAS EXPERIENCIAS PROFESIONALES\n- algo")
+    assert "## OTRAS EXPERIENCIAS PROFESIONALES" in markdown
+    assert "## OTRAS\n" not in markdown
+
+
+def test_estructurar_parte_dos_titulos_pegados_por_columnas():
+    markdown = estructurar("Luca Baello\nEDUCACIÓN ACADÉMICA IDIOMAS & COMUNICACIÓN")
+    assert "## EDUCACIÓN ACADÉMICA" in markdown
+    assert "## IDIOMAS & COMUNICACIÓN" in markdown
+
+
+def test_estructurar_no_pega_un_titulo_de_proyecto_con_el_parrafo_anterior():
+    crudo = "\n".join(
+        [
+            "Luca Baello",
+            "PROYECTOS",
+            "Aplicación desktop basada en Electron y React que unifica sesiones.",
+            "ai-progress:",
+            "Widget de escritorio para ver el progreso.",
+        ]
+    )
+    markdown = estructurar(crudo)
+    assert "sesiones. ai-progress:" not in markdown
+    assert "\nai-progress:" in markdown
 
 
 def test_extraer_desde_archivo_md_y_txt(tmp_path):

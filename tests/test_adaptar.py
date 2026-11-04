@@ -75,6 +75,12 @@ def test_estilo_desconocido_cae_en_ats():
     assert render(adaptado, "inventado") == render(adaptado, "ats")
 
 
+def test_no_muestra_secciones_vacias():
+    cv = parsear("# Ana Pérez\n\n## EXPERIENCIA\n\n- algo con React\n\n## IDIOMAS\n")
+    adaptado = adaptar(cv, "React")
+    assert all(s.nombre != "IDIOMAS" for s in adaptado.secciones)
+
+
 def test_escapa_html_del_cv():
     cv = parsear("# Nombre <script>alert(1)</script>\n\n## EXPERIENCIA\n\n- algo")
     html = render(adaptar(cv, "React"), "ats")

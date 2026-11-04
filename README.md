@@ -116,24 +116,27 @@ El PDF es el formato más hostil que existe. Acá se lee con la biblioteca está
 | PDF exportado desde Word / Google Docs / LaTeX | Funciona: se leen los `ToUnicode` de cada fuente |
 | PDF con fuentes sin mapa de caracteres | **Se rechaza con un mensaje claro** en vez de devolver texto basura |
 | PDF escaneado (una foto) | Se rechaza: no hay texto, haría falta OCR |
-| PDF a dos columnas | El texto sale, pero el orden puede mezclar las columnas: revisalo en el textarea |
+| PDF a dos columnas | El texto sale, pero las columnas se intercalan por renglón: revisalo en el textarea |
 | PDF con contraseña | Se rechaza |
+
+Un PDF no escribe líneas, escribe bloques sueltos: un cambio de negrita, un bullet o una palabra en
+otro color es un bloque nuevo con su propia posición. Por eso el texto se reconstruye **por
+coordenadas**: todo lo que comparte altura se une de izquierda a derecha, y los renglones cortados
+por el ancho de la página se vuelven a pegar. Sin eso sale una palabra por renglón.
 
 La regla es la misma que en el resto del proyecto: si no se puede leer, se dice. Nunca se adivina.
 Un `.docx` exportado desde Word es la opción más confiable para un CV con diseño.
 
-Los acentos y el separador `·` pueden salir cambiados en PDFs con varias fuentes: el texto queda en
-el textarea para que lo corrijas antes de analizar.
-
 ## Tests
 
 ```bash
-python -m pytest -q      # 37 tests
+python -m pytest -q      # 45 tests
 ```
 
 Cubren el parser, la detección de requisitos (incluidos los falsos positivos típicos: "reactiva" no
 es React, "go" no es Go), el encaje, la regla anti-invención, que la plantilla ATS no emita tablas
-ni grillas, y la extracción de archivos con un `.docx` y un PDF armados a mano en el propio test.
+ni grillas, y la extracción de archivos con un `.docx` y PDFs armados a mano en el propio test —
+incluido el caso de un PDF que escribe cada palabra en un bloque aparte.
 
 ## Licencia
 

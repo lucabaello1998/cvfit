@@ -95,6 +95,9 @@ def adaptar(cv: CV, aviso_texto: str, max_bullets: int = 6) -> Adaptado:
         if "perfil" in nombre or "resumen" in nombre:
             continue  # el resumen se reemplaza arriba
 
+        if not (seccion.parrafos or seccion.bullets or seccion.bloques or seccion.tabla):
+            continue  # un título sin contenido (típico de PDFs a dos columnas) no se muestra vacío
+
         nueva = Seccion(nombre=seccion.nombre, parrafos=list(seccion.parrafos), tabla=list(seccion.tabla))
 
         if seccion.bloques:
@@ -132,13 +135,9 @@ def adaptar(cv: CV, aviso_texto: str, max_bullets: int = 6) -> Adaptado:
 
         secciones.append(nueva)
 
-    # secciones con más encaje primero (Resultados/Experiencia antes que lo periférico)
-    def peso(seccion: Seccion) -> int:
-        texto = " ".join([*seccion.parrafos, *seccion.bullets, *(b for bl in seccion.bloques for b in bl.bullets)])
-        return _relevancia(texto, objetivo)
-
-    fijas = {"educaci", "idioma", "educación", "lenguaje"}
-    secciones.sort(key=lambda s: (any(f in s.nombre.lower() for f in fijas), -peso(s)))
+    # Se respeta el orden que eligió el autor; sólo educación e idiomas van al final.
+    fijas = {"educaci", "educación", "idioma", "lenguaje"}
+    secciones.sort(key=lambda s: any(f in s.nombre.lower() for f in fijas))
 
     # tablas (proyectos): reordenar filas por relevancia
     for seccion in secciones:

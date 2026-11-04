@@ -86,6 +86,8 @@ def parsear(markdown: str) -> CV:
     actual: Seccion | None = None
     bloque: Bloque | None = None
     tabla_en_curso: list[list[str]] = []
+    sueltos_parrafos: list[str] = []
+    sueltos_bullets: list[str] = []
 
     def cerrar_tabla() -> None:
         nonlocal tabla_en_curso
@@ -137,6 +139,8 @@ def parsear(markdown: str) -> CV:
                 bloque.bullets.append(texto)
             elif actual is not None:
                 actual.bullets.append(texto)
+            else:
+                sueltos_bullets.append(texto)
             continue
 
         texto = _limpiar(limpia)
@@ -162,6 +166,12 @@ def parsear(markdown: str) -> CV:
             continue
         if actual is not None:
             actual.parrafos.append(texto)
+        else:
+            sueltos_parrafos.append(texto)
+
+    if not secciones and (sueltos_parrafos or sueltos_bullets):
+        # CV sin un solo H2 (texto pegado o extraído de un PDF sin estructura): no se tira nada
+        secciones.append(Seccion(nombre="EXPERIENCIA", parrafos=sueltos_parrafos, bullets=sueltos_bullets))
 
     return CV(nombre=nombre, titulo=titulo, contacto=contacto, secciones=secciones, crudo=markdown)
 
