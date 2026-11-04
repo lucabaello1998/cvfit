@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .adaptar import adaptar
+from .comparar import comparar_textos
 from .cv import parsear
 from .extraer import ExtraccionError, desde_docx, desde_pdf, estructurar
 from .match import evaluar
@@ -64,6 +65,13 @@ iframe{width:100%;height:640px;border:1px solid var(--linea);border-radius:12px;
 .zona.encima{border-color:var(--acento);background:rgba(96,165,250,.1)}
 .zona input{display:block;font-size:12px;color:var(--txt);margin:0 0 6px;max-width:100%}
 .zona small{display:block;line-height:1.4}
+.tabla{width:100%;border-collapse:collapse;font-size:13px}
+.tabla th{text-align:left;font-weight:600;color:var(--tenue);font-size:11px;text-transform:uppercase;
+letter-spacing:.06em;padding:0 8px 6px;border-bottom:1px solid var(--linea)}
+.tabla td{padding:7px 8px;border-bottom:1px solid rgba(34,48,62,.6);vertical-align:top}
+.tabla tr.gana td{color:var(--ok)}
+.tabla td.num{white-space:nowrap}
+button.mini{padding:3px 9px;font-size:12px;border-radius:8px}
 .oculto{display:none}
 small{color:var(--tenue)}
 </style>
@@ -77,8 +85,8 @@ small{color:var(--tenue)}
   <div class="panel">
     <label for="archivo">CV — arrastrá el archivo o pegá el texto</label>
     <div class="zona" id="zona">
-      <input type="file" id="archivo" accept=".md,.markdown,.txt,.docx,.pdf">
-      <small id="zona-ayuda">Markdown, TXT, Word (.docx) o PDF. Los PDF escaneados (imagen) no se pueden leer: convertilos a Word primero.</small>
+      <input type="file" id="archivo" accept=".md,.markdown,.txt,.docx,.pdf" multiple>
+      <small id="zona-ayuda">Markdown, TXT, Word (.docx) o PDF. Podés soltar <strong>varios</strong>: se comparan contra el mismo aviso y queda el que mejor encaja. Los PDF escaneados (imagen) no se pueden leer: convertilos a Word primero.</small>
     </div>
     <textarea id="cv" rows="16" placeholder="# Nombre\n**Título**\n\n## EXPERIENCIA\n- ..."></textarea>
     <div class="fila"><button id="ejemplo">Cargar CV de ejemplo</button></div>
@@ -99,6 +107,11 @@ small{color:var(--tenue)}
   </div>
 
   <div>
+    <div class="panel oculto" id="panel-ranking" style="margin-bottom:14px">
+      <label style="margin-bottom:8px">Varios CVs contra el mismo aviso</label>
+      <table class="tabla" id="ranking"></table>
+      <p style="margin:10px 0 0"><small>El ganador se carga solo en el CV adaptado. "Usar" cambia la versión que vas a mandar.</small></p>
+    </div>
     <div class="panel" id="resultado">
       <div class="score">
         <div class="aro" id="aro">–</div>
@@ -127,41 +140,109 @@ $('ejemplo').onclick = async () => {
   estado('CV de ejemplo cargado.');
 };
 
-// --- ingesta de archivos: md/txt se leen en el navegador, docx/pdf en el servidor ---
-async function cargarArchivo(archivo) {
-  if (!archivo) return;
-  const nombre = archivo.name.toLowerCase();
-  const liviano = /\\.(md|markdown|txt)$/.test(nombre);
-  estado('Leyendo ' + archivo.name + '…');
-  try {
-    if (liviano) {
-      $('cv').value = await archivo.text();
-    } else {
-      const r = await fetch('/api/extraer?cv=1&nombre=' + encodeURIComponent(archivo.name), {
-        method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: archivo
-      });
-      const datos = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        estado(datos.error || ('No pude leer ' + archivo.name + '.'));
-        return;
-      }
-      $('cv').value = datos.texto;
+// --- ingesta: md/txt se leen en el navegador, docx/pdf en el servidor ---
+let cargados = [];       // [{nombre, texto}] tal como se leyeron
+let filasActuales = [];  // ranking de la última comparación
+
+const escapar = texto => String(texto).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function textoDeArchivo(archivo) {
+  if (/\\.(md|markdown|txt)$/i.test(archivo.name)) return archivo.text();
+  const r = await fetch('/api/extraer?cv=1&nombre=' + encodeURIComponent(archivo.name), {
+    method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: archivo
+  });
+  const datos = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(datos.error || 'no se pudo leer');
+  return datos.texto;
+}
+
+async function cargarArchivos(lista) {
+  const archivos = [...lista];
+  if (!archivos.length) return;
+  estado('Leyendo ' + archivos.length + (archivos.length > 1 ? ' archivos…' : ' archivo…'));
+  cargados = [];
+  const fallos = [];
+  for (const archivo of archivos) {
+    try {
+      cargados.push({nombre: archivo.name, texto: await textoDeArchivo(archivo)});
+    } catch (error) {
+      fallos.push(archivo.name + ': ' + error.message);
     }
-    estado('CV cargado desde ' + archivo.name + ' (' + $('cv').value.length + ' caracteres). Revisalo antes de analizar.');
-  } catch (error) {
-    estado('No pude leer ' + archivo.name + ': ' + error.message);
+  }
+  if (fallos.length) estado(fallos.join(' · '));
+  if (!cargados.length) return;
+
+  $('cv').value = cargados[0].texto;
+  if (cargados.length > 1) {
+    await compararCargados();
+  } else {
+    $('panel-ranking').classList.add('oculto');
+    if (!fallos.length) estado('CV cargado desde ' + cargados[0].nombre + ' (' + cargados[0].texto.length + ' caracteres). Revisalo antes de analizar.');
   }
 }
 
-$('archivo').onchange = evento => cargarArchivo(evento.target.files[0]);
+function pintarRanking(filas) {
+  filasActuales = filas;
+  $('panel-ranking').classList.remove('oculto');
+  $('ranking').innerHTML =
+    '<thead><tr><th>#</th><th>CV</th><th>Encaje</th><th>Respaldados</th><th>Gaps excluyentes</th><th></th></tr></thead><tbody>'
+    + filas.map((f, i) =>
+      '<tr class="' + (i === 0 ? 'gana' : '') + '">'
+      + '<td class="num">' + (i + 1) + '</td>'
+      + '<td>' + escapar(f.nombre) + '</td>'
+      + '<td class="num">' + f.score + '%' + (f.confiable ? '' : ' (orientativo)') + '</td>'
+      + '<td class="num">' + f.cubiertas.length + '/' + f.total_requisitos + '</td>'
+      + '<td>' + (f.faltantes.map(escapar).join(', ') || '—') + '</td>'
+      + '<td class="num"><button class="mini" data-i="' + i + '">usar</button></td>'
+      + '</tr>').join('')
+    + '</tbody>';
+}
+
+async function compararCargados() {
+  const aviso = $('aviso').value.trim();
+  if (!aviso) {
+    $('panel-ranking').classList.add('oculto');
+    estado('Cargué ' + cargados.length + ' CVs. Pegá el aviso para compararlos.');
+    return;
+  }
+  estado('Comparando ' + cargados.length + ' CVs contra el aviso…');
+  const r = await fetch('/api/comparar', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cvs: cargados, aviso: aviso})
+  });
+  const datos = await r.json().catch(() => ({}));
+  if (!r.ok) { estado(datos.error || 'No pude comparar los CVs.'); return; }
+
+  pintarRanking(datos.filas);
+  const mejor = datos.filas[0];
+  const elegido = cargados.find(c => c.nombre === mejor.nombre);
+  if (elegido) $('cv').value = elegido.texto;
+  await actualizar(true);
+  estado('Gana ' + mejor.nombre + ' con ' + mejor.score + '%. Cambiá de versión con "usar".');
+}
+
+$('ranking').addEventListener('click', async evento => {
+  const indice = evento.target.dataset.i;
+  if (indice === undefined) return;
+  const elegido = cargados.find(c => c.nombre === filasActuales[Number(indice)].nombre);
+  if (!elegido) return;
+  $('cv').value = elegido.texto;
+  await actualizar(true);
+  estado('Usando ' + elegido.nombre + ' para el CV adaptado.');
+});
+
+$('archivo').onchange = evento => cargarArchivos(evento.target.files);
 const zona = $('zona');
 zona.addEventListener('dragover', evento => { evento.preventDefault(); zona.classList.add('encima'); });
 zona.addEventListener('dragleave', () => zona.classList.remove('encima'));
 zona.addEventListener('drop', evento => {
   evento.preventDefault();
   zona.classList.remove('encima');
-  if (evento.dataTransfer.files.length) cargarArchivo(evento.dataTransfer.files[0]);
+  if (evento.dataTransfer.files.length) cargarArchivos(evento.dataTransfer.files);
 });
+
+// si edita el CV a mano, la comparación anterior deja de valer
+$('cv').addEventListener('input', () => { cargados = []; $('panel-ranking').classList.add('oculto'); });
 
 function pintar(r) {
   $('aro').className = 'aro ' + r.veredicto;
@@ -191,6 +272,7 @@ async function actualizar(renderizar) {
 
 $('analizar').onclick = async () => {
   if (!$('aviso').value.trim()) { estado('Falta el texto del aviso.'); return; }
+  if (cargados.length > 1) { await compararCargados(); return; }
   estado('Analizando…');
   await actualizar(true);
   estado('Listo. Revisá los gaps y el CV adaptado.');
@@ -283,6 +365,41 @@ class Manejador(BaseHTTPRequestHandler):
 
         cv_texto = datos.get("cv", "")
         aviso_texto = datos.get("aviso", "")
+
+        if ruta == "/api/comparar":
+            entradas = datos.get("cvs") or []
+            textos = {
+                (entrada.get("nombre") or f"CV {posicion}").strip(): entrada.get("texto", "")
+                for posicion, entrada in enumerate(entradas, start=1)
+                if isinstance(entrada, dict)
+            }
+            if len(textos) < 2:
+                self._json(400, {"error": "hacen falta al menos dos CV para comparar"})
+                return
+            if not aviso_texto.strip():
+                self._json(400, {"error": "falta el texto del aviso"})
+                return
+            filas = comparar_textos(textos, aviso_texto)
+            self._json(
+                200,
+                {
+                    "filas": [
+                        {
+                            "nombre": fila.nombre,
+                            "score": fila.resultado.score,
+                            "veredicto": fila.resultado.veredicto,
+                            "confiable": fila.resultado.confiable,
+                            "total_requisitos": fila.resultado.total_requisitos,
+                            "cubiertas": fila.resultado.cubiertas,
+                            "faltantes": fila.resultado.faltantes,
+                            "blandas_faltantes": fila.resultado.blandas_faltantes,
+                        }
+                        for fila in filas
+                    ]
+                },
+            )
+            return
+
         cv = parsear(cv_texto)
         resultado = evaluar(cv, aviso_texto)
         adaptado = adaptar(cv, aviso_texto)

@@ -28,6 +28,9 @@ CV.pdf|.docx|.md  +  aviso.txt  →  cobertura  →  gaps  →  CV adaptado en 3
 | **CV adaptado** | Reordenado por relevancia, con resumen reescrito y recorte de bullets |
 | **Estilos** | `ats` (una columna, sin tablas), `clasico` (una columna con acento), `compacto` (dos columnas) |
 
+¿Tenés varias versiones del CV? Se sueltan juntas contra el mismo aviso y sale el ranking de cuál
+encaja mejor — ver [Varios CVs contra el mismo aviso](#varios-cvs-contra-el-mismo-aviso).
+
 ### La regla que lo hace distinto
 
 Adaptar es **reordenar y resaltar**, no maquillar. Todo texto generado se valida contra el CV
@@ -52,6 +55,36 @@ la izquierda, el aviso a la derecha, y ves el puntaje, los gaps y la previsualiz
 La extracción de `.docx` y `.pdf` la hace el propio programa con la biblioteca estándar: `zipfile` +
 XML para Word, y descompresión de streams + mapa `ToUnicode` para PDF. No hay dependencias ni
 servicio externo, así que el CV tampoco sale de la máquina al subirlo.
+
+### Varios CVs contra el mismo aviso
+
+Si tenés dos o tres versiones del CV (una de una página, otra con métricas, la que declara
+TypeScript), no hace falta analizarlas de a una: se comparan y queda el ranking.
+
+```bash
+python -m cvfit.analizar --cv CV_1pagina.pdf CV_metricas.pdf CV_viejo.md \
+  --aviso aviso.txt --salida cv.html
+```
+
+```
+comparando 3 CVs contra el mismo aviso
+
+ #  CV                                      encaje  respaldados  gaps excluyentes
+---------------------------------------------------------------------------------
+ 1  CV_Luca_Baello_Fullstack_2Paginas.pdf     100%        13/13  —
+ 2  CV_Luca_Baello_2026_ACTUALIZADO.md         95%        12/13  —
+ 3  CV_Luca_Baello.pdf                         67%         8/13  TypeScript
+
+gana: CV_Luca_Baello_Fullstack_2Paginas.pdf
+```
+
+En la interfaz es lo mismo: soltás varios archivos juntos en la zona de carga y aparece la tabla con
+un botón **usar** por fila. El ganador se carga solo, así lo que ves en la previsualización es la
+versión que vas a mandar; con "usar" cambiás de versión sin volver a subir nada.
+
+El orden es: más cobertura ponderada, después menos gaps **excluyentes**, después más requisitos
+cubiertos. El mismo aviso se evalúa igual para todos, así que la comparación es honesta. Un archivo
+ilegible se saltea con el motivo en vez de tumbar la corrida.
 
 ### Por consola
 
@@ -130,13 +163,15 @@ Un `.docx` exportado desde Word es la opción más confiable para un CV con dise
 ## Tests
 
 ```bash
-python -m pytest -q      # 45 tests
+python -m pytest -q      # 53 tests
 ```
 
 Cubren el parser, la detección de requisitos (incluidos los falsos positivos típicos: "reactiva" no
 es React, "go" no es Go), el encaje, la regla anti-invención, que la plantilla ATS no emita tablas
 ni grillas, y la extracción de archivos con un `.docx` y PDFs armados a mano en el propio test —
-incluido el caso de un PDF que escribe cada palabra en un bloque aparte.
+incluido el caso de un PDF que escribe cada palabra en un bloque aparte. La comparación de varios
+CVs tiene sus propios tests: orden, desempate, un archivo ilegible que no tumba la corrida y el
+ganador escrito por la CLI.
 
 ## Licencia
 
