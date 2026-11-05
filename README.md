@@ -49,9 +49,11 @@ No hay LLM en el camino crítico: son reglas explícitas y auditables. Cada punt
 python -m cvfit.servidor        # http://localhost:8765
 ```
 
-Arrastrás el CV a la zona de archivo (**Markdown, TXT, Word `.docx` o PDF**) o lo pegás como texto a
-la izquierda, el aviso a la derecha, y ves el puntaje, los gaps y la previsualización del CV adaptado
-(con selector de estilo e impresión a PDF).
+Arrastrás el CV a la zona de archivo (**Markdown, TXT, Word `.docx` o PDF**) o lo pegás como texto en
+la pestaña **Tu CV**, pegás el aviso en **El aviso** y ves el puntaje, los gaps y la
+previsualización del CV adaptado. La barra de diseño (estilo, color y tamaño de letra) retoca la
+vista previa en el momento; **Editar** deja escribir directamente sobre la hoja, y **Imprimir / PDF**
+o **Descargar** se llevan exactamente lo que ves. `Ctrl` + `Enter` analiza sin soltar el teclado.
 
 La extracción de `.docx` y `.pdf` la hace el propio programa con la biblioteca estándar: `zipfile` +
 XML para Word, y descompresión de streams + mapa `ToUnicode` para PDF. No hay dependencias ni
@@ -79,7 +81,7 @@ comparando 3 CVs contra el mismo aviso
 gana: CV_Luca_Baello_Fullstack_2Paginas.pdf
 ```
 
-En la interfaz es lo mismo: soltás varios archivos juntos en la zona de carga y aparece la tabla con
+En la interfaz es lo mismo: soltás varios archivos juntos en la zona de carga y aparece el ranking con
 un botón **usar** por fila. El ganador se carga solo, así lo que ves en la previsualización es la
 versión que vas a mandar; con "usar" cambiás de versión sin volver a subir nada.
 
