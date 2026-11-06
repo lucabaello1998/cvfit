@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import suppress
 from pathlib import Path
 
+from . import __version__
 from .adaptar import adaptar
 from .comparar import comparar
 from .cv import cargar, parsear
@@ -72,7 +74,15 @@ def _tabla(filas) -> str:
     return "\n".join(lineas)
 
 
+def _consola_tolerante() -> None:
+    """Una consola Windows en cp1252 revienta con «↔» o «—»: que reemplace en vez de romper."""
+    for flujo in (sys.stdout, sys.stderr):
+        with suppress(AttributeError, ValueError):
+            flujo.reconfigure(errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _consola_tolerante()
     parser = argparse.ArgumentParser(prog="cvfit", description="Encaje CV ↔ aviso y CV adaptado")
     parser.add_argument(
         "--cv",
@@ -86,7 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--foto", type=Path, help="foto de perfil (.png, .jpg o .webp) para el encabezado")
     parser.add_argument("--acento", help="color de acento en hex, por ejemplo #1f5f8b")
     parser.add_argument("--escala", type=float, help="tamaño de letra: 0.9 a 1.3 (1 = normal)")
-    parser.add_argument("--salida", type=Path, help="archivo HTML de salida")
+    parser.add_argument("--salida", type=Path, help="archivo HTML o PDF de salida")
+    parser.add_argument("--version", action="version", version=f"cvfit {__version__}")
     args = parser.parse_args(argv)
 
     foto = ""

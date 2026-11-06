@@ -6,6 +6,16 @@ PDF — sin inventar una sola línea.**
 
 Corre local: tu CV no sale de tu máquina.
 
+## Instalación
+
+```bash
+pipx install git+https://github.com/lucabaello1998/cvfit
+```
+
+Sin dependencias: alcanza Python 3.11 o más (y Chrome o Edge instalado si querés el PDF directo).
+Quedan dos comandos: `cvfit` para la consola y `cvfit-servidor` para la interfaz. Si vas a tocar el
+código, `python -m pip install -e ".[dev]"` agrega además `pytest` y `ruff`.
+
 ![CV en formato ATS](docs/capturas/cv-ats.png)
 
 ## El problema
@@ -49,8 +59,10 @@ No hay LLM en el camino crítico: son reglas explícitas y auditables. Cada punt
 ### Con interfaz
 
 ```bash
-python -m cvfit.servidor        # http://localhost:8765
+cvfit-servidor        # http://localhost:8765
 ```
+
+Desde un clon sin instalar es lo mismo con `python -m cvfit.servidor`.
 
 Arrastrás el CV a la zona de archivo (**Markdown, TXT, Word `.docx` o PDF**) o lo pegás como texto en
 la pestaña **Tu CV**, pegás el aviso en **El aviso** y ves el puntaje, los gaps y la previsualización
@@ -113,13 +125,15 @@ ilegible se saltea con el motivo en vez de tumbar la corrida.
 ### Por consola
 
 ```bash
-python -m cvfit.analizar --cv ejemplos/cv.md --aviso ejemplos/aviso.txt --estilo ats --salida cv.pdf
-python -m cvfit.analizar --cv ~/Downloads/CV.pdf --aviso aviso.txt --estilo ats --salida cv.pdf
+cvfit --cv ejemplos/cv.md --aviso ejemplos/aviso.txt --estilo ats --salida cv.pdf
+cvfit --cv ~/Downloads/CV.pdf --aviso aviso.txt --estilo ats --salida cv.pdf
 
 # con retoques
-python -m cvfit.analizar --cv CV.pdf --aviso aviso.txt --estilo clasico \
+cvfit --cv CV.pdf --aviso aviso.txt --estilo clasico \
   --foto ~/fotos/perfil.jpg --acento "#0f766e" --escala 1.1 --salida cv.pdf
 ```
+
+Desde un clon sin instalar, cambiá `cvfit` por `python -m cvfit.analizar`.
 
 ```
 94% — Encaje alto: podés respaldar casi todo lo que pide el aviso.
