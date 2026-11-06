@@ -10,13 +10,41 @@ from .adaptar import adaptar
 from .comparar import comparar
 from .cv import cargar, parsear
 from .extraer import ExtraccionError, estructurar, extraer_desde_archivo
+from .pdf import PdfError, a_pdf
 from .plantillas import NOMBRES, foto_desde_archivo, render
+from .revisar import revisar
 
 VEREDICTOS = {
     "alta": "Encaje alto: podés respaldar casi todo lo que pide el aviso.",
     "media": "Encaje medio: llegás a la entrevista si tapás los gaps marcados.",
     "baja": "Encaje bajo: el aviso pide cosas que hoy no podés respaldar.",
 }
+
+ESTADOS = {
+    "ok": "sin nada grave",
+    "medio": "hay cosas para pulir",
+    "mal": "hay cosas que pueden descartarte",
+}
+
+
+def _revision_texto(revision) -> str:
+    """La revisión en consola: mismo motor que la interfaz, sin adornos."""
+    lineas = [f"\nrevisión del CV — {ESTADOS[revision.estado]}"]
+    marcas = {"alto": "!!", "medio": " !", "bajo": " ·"}
+    for hallazgo in revision.hallazgos:
+        lineas.append(f"  {marcas[hallazgo.nivel]} [{hallazgo.area}] {hallazgo.mensaje}")
+        lineas.append(f"       {hallazgo.como}")
+    if revision.reescrituras:
+        lineas.append("\n  reescrituras sugeridas:")
+        for reescritura in revision.reescrituras:
+            lineas.append(f"    - {reescritura.original}")
+            lineas.append(f"      {reescritura.propuesta}")
+    if revision.bien:
+        lineas.append("\n  ya está bien:")
+        for texto in revision.bien:
+            lineas.append(f"    · {texto}")
+    return "\n".join(lineas)
+
 
 
 def leer_cv(ruta):
@@ -111,10 +139,22 @@ def main(argv: list[str] | None = None) -> int:
         for cambio in adaptado.cambios:
             print(f"  · {cambio}")
 
+    print(_revision_texto(revisar(ganadora.cv, args.estilo)))
+
     if args.salida:
         html = render(adaptado, args.estilo, foto=foto, acento=args.acento, escala=args.escala)
-        args.salida.write_text(html, encoding="utf-8")
-        print(f"\nescrito: {args.salida}  (estilo {args.estilo})")
+        if args.salida.suffix.lower() == ".pdf":
+            try:
+                ruta = a_pdf(html, args.salida)
+                print(f"\nescrito: {ruta}  (estilo {args.estilo}, PDF)")
+            except PdfError as error:
+                alternativa = args.salida.with_suffix(".html")
+                alternativa.write_text(html, encoding="utf-8")
+                print(f"\nno pude hacer el PDF: {error}")
+                print(f"escribí {alternativa}: abrilo e imprimí desde el navegador.")
+        else:
+            args.salida.write_text(html, encoding="utf-8")
+            print(f"\nescrito: {args.salida}  (estilo {args.estilo})")
     return 0
 
 

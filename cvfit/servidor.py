@@ -7,15 +7,19 @@ http://localhost:8765, se usa y se apaga.
 from __future__ import annotations
 
 import json
+import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unicodedata import normalize
 
 from .adaptar import adaptar
 from .comparar import comparar_textos
 from .cv import parsear
 from .extraer import ExtraccionError, desde_docx, desde_pdf, estructurar
 from .match import evaluar
+from .pdf import PdfError, a_pdf
 from .plantillas import render
+from .revisar import CONSEJOS, GUIA_ESTILOS, revisar
 
 RAIZ = Path(__file__).resolve().parent.parent
 EJEMPLO = RAIZ / "ejemplos" / "cv.md"
@@ -229,6 +233,40 @@ box-shadow:0 24px 60px -30px rgba(0,0,0,.9),0 2px 6px rgba(0,0,0,.35)}
 .marco.vacio iframe{height:430px}
 .marco.vacio{display:grid;place-items:center}
 
+/* ---------- revisión ---------- */
+.rev-cabecera{display:flex;align-items:center;gap:11px}
+.rev-semaforo{width:11px;height:11px;flex:none;border-radius:50%;background:var(--tenue-2);
+box-shadow:0 0 0 4px rgba(142,163,184,.12);transition:background .2s,box-shadow .2s}
+.rev-semaforo.ok{background:var(--ok);box-shadow:0 0 0 4px rgba(61,220,151,.14)}
+.rev-semaforo.medio{background:var(--medio);box-shadow:0 0 0 4px rgba(245,192,74,.14)}
+.rev-semaforo.mal{background:var(--mal);box-shadow:0 0 0 4px rgba(248,113,113,.14)}
+.rev-titulo{font-size:13.5px;font-weight:600}
+.rev-detalle{margin-top:2px;font-size:12px;line-height:1.4;color:var(--tenue)}
+.hallazgos{list-style:none;padding-left:0;margin:8px 0 0}
+.hallazgo{display:flex;gap:9px;padding:7px 0;border-top:1px solid var(--linea)}
+.hallazgo:first-child{border-top:0}
+.h-nivel{flex:none;margin-top:4px;width:7px;height:7px;border-radius:50%;background:var(--tenue-2)}
+.h-nivel.alto{background:var(--mal)}
+.h-nivel.medio{background:var(--medio)}
+.h-texto{margin:0;font-size:12.5px;line-height:1.45;color:#d3e0ee}
+.h-texto b{color:var(--txt);font-weight:600}
+.h-como{margin:2px 0 0;font-size:11.5px;line-height:1.45;color:var(--tenue-2)}
+.reescritura{padding:8px 0;border-top:1px solid var(--linea)}
+.reescritura:first-child{border-top:0}
+.r-antes{font-size:11.5px;color:var(--tenue-2);text-decoration:line-through}
+.r-despues{font-size:12.5px;color:#dbeafe}
+.r-motivo{margin-top:3px;font-size:11.5px;line-height:1.45;color:var(--tenue-2)}
+.guia-item{padding:8px 0;border-top:1px solid var(--linea)}
+.guia-item:first-child{border-top:0}
+.guia-nombre{font-size:12.5px;font-weight:600}
+.guia-cuando{margin-top:1px;font-size:11.5px;color:#93c5fd}
+.guia-detalle{margin-top:3px;font-size:11.5px;line-height:1.45;color:var(--tenue-2)}
+.consejo{padding:8px 0;border-top:1px solid var(--linea)}
+.consejo:first-child{border-top:0}
+.consejo b{display:block;margin-bottom:3px;font-size:12.5px;font-weight:600}
+.consejo ul{margin:0;padding-left:15px;font-size:11.5px;line-height:1.5;color:var(--tenue-2)}
+.consejo li{margin-bottom:3px}
+
 /* ---------- toast ---------- */
 .toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,16px);z-index:40;
 max-width:min(560px,calc(100vw - 32px));padding:10px 16px;border-radius:10px;font-size:12.5px;
@@ -250,7 +288,7 @@ transition:opacity .18s,transform .18s}
   <div class="acciones">
     <div class="chip-score oculto" id="chip-score"><span class="dot"></span><b id="chip-num">–</b><span id="chip-txt">sin analizar</span></div>
     <button id="editar" class="ghost" type="button" disabled title="Editar el CV en la vista previa">Editar</button>
-    <button id="descargar" class="ghost" type="button" disabled title="Descargar el HTML con lo editado">Descargar</button>
+    <button id="descargar" class="ghost" type="button" disabled title="Descargar el CV en PDF con lo editado">Descargar</button>
     <button id="imprimir" class="principal" type="button" disabled title="Imprimir o guardar como PDF">Imprimir / PDF</button>
   </div>
 </header>
@@ -281,6 +319,7 @@ transition:opacity .18s,transform .18s}
             <button id="quitar-foto" class="mini oculto" type="button">Quitar</button>
           </div>
           <button id="ejemplo" class="mini" type="button">Cargar ejemplo</button>
+          <button id="limpiar" class="mini" type="button" title="Borrar el CV, el aviso y la sesión guardada">Limpiar</button>
         </div>
       </div>
 
@@ -306,6 +345,33 @@ transition:opacity .18s,transform .18s}
       <div id="faltantes" class="chips"></div>
       <details class="bloque oculto" id="bloque-obs"><summary>Observaciones <span id="n-obs"></span></summary><ul class="lista" id="observaciones"></ul></details>
       <details class="bloque oculto" id="bloque-cambios"><summary>Qué cambió en el CV <span id="n-cambios"></span></summary><ul class="lista" id="cambios"></ul></details>
+    </section>
+
+    <section class="panel" id="panel-revision">
+      <div class="rev-cabecera">
+        <span class="rev-semaforo" id="rev-semaforo"></span>
+        <div>
+          <div class="rev-titulo">Revisión del CV</div>
+          <div class="rev-detalle" id="rev-detalle">Pegá tu CV y te marco lo que miraría un reclutador.</div>
+        </div>
+      </div>
+      <ul class="hallazgos" id="rev-hallazgos"></ul>
+      <details class="bloque oculto" id="bloque-reescrituras">
+        <summary>Reescrituras sugeridas <span id="n-reescrituras"></span></summary>
+        <div id="reescrituras"></div>
+      </details>
+      <details class="bloque oculto" id="bloque-bien">
+        <summary>Lo que ya está bien <span id="n-bien"></span></summary>
+        <ul class="lista" id="rev-bien"></ul>
+      </details>
+      <details class="bloque" id="bloque-guia">
+        <summary>Qué estilo va con qué</summary>
+        <div id="rev-guia"></div>
+      </details>
+      <details class="bloque" id="bloque-consejos">
+        <summary>Consejos de reclutamiento</summary>
+        <div id="rev-consejos"></div>
+      </details>
     </section>
 
     <section class="panel oculto" id="panel-ranking">
@@ -404,6 +470,8 @@ $('ejemplo').onclick = async () => {
   $('cv').value = await respuesta.text();
   $('nombre-archivo').textContent = 'ejemplo.md';
   contar();
+  actualizarRevision();
+  guardarSesion();
   avisar('CV de ejemplo cargado.');
 };
 
@@ -441,6 +509,8 @@ async function cargarArchivos(lista) {
   if (cargados.length) {
     $('cv').value = cargados[0].texto;
     contar();
+    actualizarRevision();
+    guardarSesion();
   }
   if (fallos.length) avisar(fallos.join(' · '), 'mal');
   if (!cargados.length) return;
@@ -526,8 +596,10 @@ $('cv').addEventListener('input', () => {
   cargados = [];
   $('panel-ranking').classList.add('oculto');
   contar();
+  programarRevision();
+  programarGuardado();
 });
-$('aviso').addEventListener('input', contar);
+$('aviso').addEventListener('input', () => { contar(); programarGuardado(); });
 
 // --- resultado ---
 function pintar(r) {
@@ -605,6 +677,78 @@ async function actualizar(renderizar) {
   if (renderizar) await pintarPreview();
 }
 
+// --- revisión del CV: reglas explícitas, sin IA ---
+const AREAS = {
+  contacto: 'Contacto', estructura: 'Estructura', fechas: 'Fechas',
+  redaccion: 'Redacción', formato: 'Formato'
+};
+let temporizadorRevision;
+
+function pintarRevision(r) {
+  $('rev-guia').innerHTML = r.guia.map(g =>
+    '<div class="guia-item"><div class="guia-nombre">' + escapar(g.nombre) + '</div>'
+    + '<div class="guia-cuando">' + escapar(g.cuando) + '</div>'
+    + '<div class="guia-detalle">' + escapar(g.detalle) + '</div></div>'
+  ).join('');
+  $('rev-consejos').innerHTML = r.consejos.map(c =>
+    '<div class="consejo"><b>' + escapar(c.titulo) + '</b><ul>'
+    + c.cuerpo.map(p => '<li>' + escapar(p) + '</li>').join('') + '</ul></div>'
+  ).join('');
+
+  if (r.vacio) { vaciarRevision(); return; }
+
+  $('rev-semaforo').className = 'rev-semaforo ' + r.estado;
+  if (r.estado === 'ok') {
+    $('rev-detalle').textContent = 'Nada grave: está listo para mandar.';
+  } else if (r.estado === 'mal') {
+    $('rev-detalle').textContent = r.altos + (r.altos === 1 ? ' punto que puede descartarte' : ' puntos que pueden descartarte')
+      + (r.medios ? ' y ' + r.medios + ' para pulir.' : '.');
+  } else {
+    const n = r.hallazgos.length;
+    $('rev-detalle').textContent = n + (n === 1 ? ' punto para pulir antes de enviar.' : ' puntos para pulir antes de enviar.');
+  }
+
+  $('rev-hallazgos').innerHTML = r.hallazgos.map(h =>
+    '<li class="hallazgo"><span class="h-nivel ' + h.nivel + '"></span><div>'
+    + '<p class="h-texto"><b>' + (AREAS[h.area] || escapar(h.area)) + ':</b> ' + escapar(h.mensaje) + '</p>'
+    + '<p class="h-como">' + escapar(h.como) + '</p></div></li>'
+  ).join('');
+
+  $('reescrituras').innerHTML = r.reescrituras.map(x =>
+    '<div class="reescritura"><div class="r-antes">' + escapar(x.original) + '</div>'
+    + '<div class="r-despues">' + escapar(x.propuesta) + '</div>'
+    + '<div class="r-motivo">' + escapar(x.motivo) + '</div></div>'
+  ).join('');
+  $('n-reescrituras').textContent = r.reescrituras.length ? '(' + r.reescrituras.length + ')' : '';
+  $('bloque-reescrituras').classList.toggle('oculto', !r.reescrituras.length);
+  $('bloque-reescrituras').open = r.reescrituras.length > 0 && r.reescrituras.length <= 3;
+
+  $('rev-bien').innerHTML = r.bien.map(b => '<li>' + escapar(b) + '</li>').join('');
+  $('n-bien').textContent = r.bien.length ? '(' + r.bien.length + ')' : '';
+  $('bloque-bien').classList.toggle('oculto', !r.bien.length);
+}
+
+function vaciarRevision() {
+  $('rev-semaforo').className = 'rev-semaforo';
+  $('rev-detalle').textContent = 'Pegá tu CV y te marco lo que miraría un reclutador.';
+  $('rev-hallazgos').innerHTML = '';
+  $('bloque-reescrituras').classList.add('oculto');
+  $('bloque-bien').classList.add('oculto');
+}
+
+async function actualizarRevision() {
+  const r = await fetch('/api/revisar', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({cv: $('cv').value, estilo: estiloActual})});
+  if (!r.ok) { vaciarRevision(); return; }
+  pintarRevision(await r.json());
+}
+
+function programarRevision() {
+  clearTimeout(temporizadorRevision);
+  temporizadorRevision = setTimeout(actualizarRevision, 650);
+}
+
+
 function marcarColor() {
   const hex = colorActual.toLowerCase();
   let encontrado = false;
@@ -632,6 +776,8 @@ $('colores').addEventListener('click', evento => {
   colorActual = boton.dataset.color;
   marcarColor();
   actualizar(true);
+  programarRevision();
+  guardarSesion();
 });
 
 let temporizadorColor;
@@ -640,7 +786,7 @@ $('color-libre').oninput = () => {
   colorActual = $('color-libre').value;
   marcarColor();
   clearTimeout(temporizadorColor);
-  temporizadorColor = setTimeout(() => actualizar(true), 220);
+  temporizadorColor = setTimeout(() => { actualizar(true); guardarSesion(); }, 220);
 };
 
 $('escalas').addEventListener('click', evento => {
@@ -649,6 +795,7 @@ $('escalas').addEventListener('click', evento => {
   escalaActual = boton.dataset.escala;
   document.querySelectorAll('#escalas .seg').forEach(s => s.classList.toggle('activa', s === boton));
   actualizar(true);
+  guardarSesion();
 });
 
 $('estilos').addEventListener('click', evento => {
@@ -658,6 +805,8 @@ $('estilos').addEventListener('click', evento => {
   document.querySelectorAll('#estilos .op').forEach(s => s.classList.toggle('activa', s === boton));
   ajustarColorPorEstilo();
   actualizar(true);
+  programarRevision();
+  guardarSesion();
 });
 
 $('foto').onchange = evento => {
@@ -675,6 +824,7 @@ $('foto').onchange = evento => {
     $('avatar').classList.add('con-foto');
     $('quitar-foto').classList.remove('oculto');
     await actualizar(true);
+    guardarSesion();
     avisar('Foto cargada (' + Math.max(1, Math.round(archivo.size / 1024)) + ' KB).', 'ok');
   };
   lector.readAsDataURL(archivo);
@@ -688,6 +838,7 @@ $('quitar-foto').onclick = async () => {
   $('quitar-foto').classList.add('oculto');
   $('foto').value = '';
   await actualizar(true);
+  guardarSesion();
   avisar('Foto quitada.');
 };
 
@@ -701,6 +852,8 @@ async function analizar() {
   boton.textContent = 'Analizando…';
   try {
     await actualizar(true);
+    await actualizarRevision();
+    guardarSesion();
     avisar('Listo. Revisá los gaps y el CV adaptado.', 'ok');
   } finally {
     boton.disabled = false;
@@ -740,20 +893,158 @@ $('editar').onclick = () => {
     : 'Edición terminada. Si cambiás de estilo, color o analizás de nuevo, el CV se regenera.');
 };
 
-$('descargar').onclick = () => {
-  const doc = $('preview').contentDocument;
-  if (!doc || !doc.querySelector('.hoja')) { avisar('Primero analizá el CV.', 'mal'); return; }
-  const html = '<!doctype html>' + doc.documentElement.outerHTML;
+function nombreDeArchivo() {
+  const hallado = $('cv').value.match(/^#\\s+(.+)$/m);
+  const base = (hallado ? hallado[1] : 'cv')
+    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return 'CV_' + (base || 'cv') + '.pdf';
+}
+
+function bajarHtml(html) {
   const enlace = document.createElement('a');
   enlace.href = URL.createObjectURL(new Blob([html], {type: 'text/html;charset=utf-8'}));
-  enlace.download = 'cv.html';
+  enlace.download = nombreDeArchivo().replace(/\\.pdf$/i, '.html');
   enlace.click();
   setTimeout(() => URL.revokeObjectURL(enlace.href), 2000);
-  avisar('Descargado: cv.html (abrilo e imprimí a PDF desde el navegador).', 'ok');
+}
+
+$('descargar').onclick = async () => {
+  const doc = $('preview').contentDocument;
+  if (!doc || !doc.querySelector('.hoja')) { avisar('Primero analizá el CV.', 'mal'); return; }
+  const boton = $('descargar');
+  const original = boton.textContent;
+  boton.disabled = true;
+  boton.textContent = 'Generando…';
+  const html = '<!doctype html>' + doc.documentElement.outerHTML;
+  const nombre = nombreDeArchivo();
+  try {
+    const r = await fetch('/api/pdf', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({html: html, nombre: nombre})});
+    if (r.ok) {
+      const enlace = document.createElement('a');
+      enlace.href = URL.createObjectURL(await r.blob());
+      enlace.download = nombre;
+      enlace.click();
+      setTimeout(() => URL.revokeObjectURL(enlace.href), 4000);
+      avisar('Descargado: ' + nombre, 'ok');
+      return;
+    }
+    const datos = await r.json().catch(() => ({}));
+    bajarHtml(html);
+    avisar((datos.error || 'No pude generar el PDF') + '. Bajé el .html: abrilo e imprimí desde ahí.', 'mal');
+  } catch (error) {
+    bajarHtml(html);
+    avisar('Se cayó la conexión con el servidor. Bajé el .html como respaldo.', 'mal');
+  } finally {
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+};
+
+// --- sesión: un refresco no borra lo pegado ---
+const CLAVE_SESION = 'cvfit.sesion.v1';
+let temporizadorGuardado;
+
+function guardarSesion() {
+  try {
+    localStorage.setItem(CLAVE_SESION, JSON.stringify({
+      cv: $('cv').value, aviso: $('aviso').value, estilo: estiloActual,
+      color: colorActual, escala: escalaActual, foto: fotoData, colorManual: colorManual
+    }));
+  } catch (error) { /* cuota llena o modo privado: se sigue sin guardar */ }
+}
+
+function programarGuardado() {
+  clearTimeout(temporizadorGuardado);
+  temporizadorGuardado = setTimeout(guardarSesion, 500);
+}
+
+function limpiarSesion() {
+  try { localStorage.removeItem(CLAVE_SESION); } catch (error) { /* nada */ }
+}
+
+function marcarEstilo(valor) {
+  document.querySelectorAll('#estilos .op').forEach(s => {
+    s.classList.toggle('activa', s.dataset.estilo === valor);
+  });
+}
+
+function marcarEscala(valor) {
+  document.querySelectorAll('#escalas .seg').forEach(s => {
+    s.classList.toggle('activa', s.dataset.escala === valor);
+  });
+}
+
+function restaurarSesion() {
+  let datos = null;
+  try { datos = JSON.parse(localStorage.getItem(CLAVE_SESION) || 'null'); } catch (error) { datos = null; }
+  if (!datos || typeof datos !== 'object') return false;
+
+  if (datos.cv) $('cv').value = datos.cv;
+  if (datos.aviso) $('aviso').value = datos.aviso;
+  if (datos.estilo) { estiloActual = datos.estilo; marcarEstilo(estiloActual); }
+  if (datos.escala) { escalaActual = String(datos.escala); marcarEscala(escalaActual); }
+  if (datos.foto) {
+    fotoData = datos.foto;
+    $('miniatura').src = fotoData;
+    $('miniatura').classList.remove('oculto');
+    $('avatar').classList.add('con-foto');
+    $('quitar-foto').classList.remove('oculto');
+  }
+  if (datos.color) {
+    colorManual = Boolean(datos.colorManual);
+    colorActual = datos.color;
+    marcarColor();
+  }
+  contar();
+  return Boolean(datos.cv || datos.aviso || datos.foto);
+}
+
+$('limpiar').onclick = () => {
+  limpiarSesion();
+  $('cv').value = '';
+  $('aviso').value = '';
+  $('nombre-archivo').textContent = 'o soltalos acá';
+  cargados = [];
+  indiceEnUso = 0;
+  $('panel-ranking').classList.add('oculto');
+  fotoData = '';
+  $('miniatura').src = '';
+  $('miniatura').classList.add('oculto');
+  $('avatar').classList.remove('con-foto');
+  $('quitar-foto').classList.add('oculto');
+  $('foto').value = '';
+  colorManual = false;
+  ajustarColorPorEstilo();
+  contar();
+  vaciarRevision();
+  marcarAcciones(false);
+  $('preview').srcdoc = PLACEHOLDER;
+  document.querySelector('.marco').classList.add('vacio');
+  $('chip-score').classList.add('oculto');
+  $('chip-score').className = 'chip-score oculto';
+  $('aro').className = 'aro';
+  $('aro').textContent = '–';
+  $('barra').style.width = '0';
+  $('veredicto').textContent = 'Sin analizar';
+  $('detalle').textContent = 'Subí tu CV, pegá el aviso y apretá Analizar.';
+  $('cubiertas').innerHTML = '';
+  $('faltantes').innerHTML = '';
+  $('bloque-obs').classList.add('oculto');
+  $('bloque-cambios').classList.add('oculto');
+  avisar('Listo: empezás de cero.');
 };
 
 ajustarColorPorEstilo();
 contar();
+const recuperado = restaurarSesion();
+actualizarRevision();
+if (recuperado) {
+  pintarPreview();
+  if ($('cv').value.trim() && $('aviso').value.trim()) actualizar(true);
+  avisar('Recuperé lo último que tenías: CV, aviso y diseño.', 'ok');
+}
 </script>
 </body>
 </html>
@@ -763,6 +1054,12 @@ contar();
 class Manejador(BaseHTTPRequestHandler):
     def log_message(self, formato, *args):  # silencio en consola
         return
+
+    @staticmethod
+    def _texto(datos: dict, clave: str) -> str:
+        """Campo de texto del payload, tolerante a un cliente que mande otra cosa."""
+        valor = datos.get(clave)
+        return valor.strip() if isinstance(valor, str) else ""
 
     def _responder(self, codigo: int, cuerpo: bytes, tipo: str) -> None:
         self.send_response(codigo)
@@ -823,6 +1120,81 @@ class Manejador(BaseHTTPRequestHandler):
 
         self._json(200, {"nombre": nombre, "texto": texto})
 
+    def _revisar(self, datos: dict) -> None:
+        """Reglas explícitas: no inventa experiencia, sólo marca qué conviene mejorar."""
+        texto = self._texto(datos, "cv")
+        cuerpo: dict = {"guia": GUIA_ESTILOS, "consejos": CONSEJOS}
+        if not texto:
+            cuerpo.update(
+                {
+                    "vacio": True,
+                    "estado": "ok",
+                    "altos": 0,
+                    "medios": 0,
+                    "hallazgos": [],
+                    "reescrituras": [],
+                    "bien": [],
+                }
+            )
+            self._json(200, cuerpo)
+            return
+
+        revision = revisar(parsear(texto), datos.get("estilo", "ats"))
+        cuerpo.update(
+            {
+                "vacio": False,
+                "estado": revision.estado,
+                "altos": revision.altos,
+                "medios": revision.medios,
+                "hallazgos": [
+                    {"area": h.area, "nivel": h.nivel, "mensaje": h.mensaje, "como": h.como}
+                    for h in revision.hallazgos
+                ],
+                "reescrituras": [
+                    {"original": r.original, "propuesta": r.propuesta, "motivo": r.motivo}
+                    for r in revision.reescrituras
+                ],
+                "bien": revision.bien,
+            }
+        )
+        self._json(200, cuerpo)
+
+    def _pdf(self, datos: dict) -> None:
+        """PDF del HTML del iframe, así se respeta lo que se editó a mano en la vista previa."""
+        html = self._texto(datos, "html")
+        if not html:
+            if not self._texto(datos, "cv"):
+                self._json(400, {"error": "no hay CV para pasar a PDF"})
+                return
+            cv = parsear(self._texto(datos, "cv"))
+            html = render(
+                adaptar(cv, datos.get("aviso") or ""),
+                datos.get("estilo", "ats"),
+                foto=datos.get("foto"),
+                acento=datos.get("acento"),
+                escala=datos.get("escala"),
+            )
+
+        nombre = normalize("NFKD", Path(str(datos.get("nombre") or "cv")).name)
+        nombre = nombre.encode("ascii", "ignore").decode("ascii").replace(" ", "_")
+        nombre = "".join(c for c in nombre if c.isalnum() or c in "._-") or "cv"
+        if not nombre.lower().endswith(".pdf"):
+            nombre += ".pdf"
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="cvfit-entrega-") as temporal:
+                cuerpo = a_pdf(html, Path(temporal) / "cv.pdf").read_bytes()
+        except PdfError as error:
+            self._json(503, {"error": str(error)})
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(cuerpo)))
+        self.send_header("Content-Disposition", f'attachment; filename="{nombre}"')
+        self.end_headers()
+        self.wfile.write(cuerpo)
+
     def do_POST(self) -> None:
         from urllib.parse import urlparse
 
@@ -837,9 +1209,19 @@ class Manejador(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._responder(400, b'{"error":"json invalido"}', "application/json")
             return
+        if not isinstance(datos, dict):
+            self._json(400, {"error": "el cuerpo tiene que ser un objeto JSON"})
+            return
 
-        cv_texto = datos.get("cv", "")
-        aviso_texto = datos.get("aviso", "")
+        cv_texto = self._texto(datos, "cv")
+        aviso_texto = self._texto(datos, "aviso")
+
+        if ruta == "/api/revisar":
+            self._revisar(datos)
+            return
+        if ruta == "/api/pdf":
+            self._pdf(datos)
+            return
 
         if ruta == "/api/comparar":
             entradas = datos.get("cvs") or []
