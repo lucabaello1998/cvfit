@@ -85,9 +85,20 @@ def extraer_desde_archivo(ruta) -> str:
 # --------------------------------------------------------------------------- DOCX
 
 
+# Un CV real no pasa de unos pocos MB. El tope evita que un .docx armado como
+# zip bomb (o con una parte gigante) se descomprima entero en memoria.
+LIMITE_DOCX = 25 * 1024 * 1024
+
+
 def desde_docx(datos: bytes) -> str:
     try:
         archivo = zipfile.ZipFile(io.BytesIO(datos))
+        info = archivo.getinfo("word/document.xml")
+        total = sum(parte.file_size for parte in archivo.infolist())
+        if info.file_size > LIMITE_DOCX or total > LIMITE_DOCX * 2:
+            raise ExtraccionError(
+                f"el .docx descomprime {total // (1024 * 1024)} MB y el límite es {LIMITE_DOCX // (1024 * 1024)} MB"
+            )
         xml = archivo.read("word/document.xml")
     except (zipfile.BadZipFile, KeyError) as error:
         raise ExtraccionError("el .docx no se pudo abrir (¿es un .doc viejo renombrado?)") from error
