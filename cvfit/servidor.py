@@ -7,14 +7,13 @@ http://localhost:8765, se usa y se apaga.
 from __future__ import annotations
 
 import json
-import re
 import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unicodedata import normalize
 
 from .adaptar import adaptar
-from .comparar import comparar_avisos, comparar_textos, nombrar_avisos
+from .comparar import comparar_avisos, comparar_textos, nombrar_avisos, separar_avisos
 from .cv import parsear
 from .extraer import ExtraccionError, desde_docx, desde_pdf, estructurar
 from .match import evaluar
@@ -25,18 +24,6 @@ from .revisar import CONSEJOS, GUIA_ESTILOS, revisar
 RAIZ = Path(__file__).resolve().parent.parent
 EJEMPLO = RAIZ / "ejemplos" / "cv.md"
 MAXIMO = 12 * 1024 * 1024
-SEPARADOR_AVISOS = re.compile(r"(?m)^[ \t]*---+[ \t]*$")
-
-
-def separar_avisos(valor) -> list[str]:
-    """Los avisos vienen como lista o como un solo texto separado por líneas de `---`."""
-    if isinstance(valor, list):
-        partes = [parte for parte in valor if isinstance(parte, str)]
-    elif isinstance(valor, str):
-        partes = SEPARADOR_AVISOS.split(valor)
-    else:
-        partes = []
-    return [parte.strip() for parte in partes if parte.strip()]
 
 
 def fila_json(nombre: str, resultado, texto: str | None = None) -> dict:
@@ -643,7 +630,7 @@ async function compararAvisos() {
     avisar('Pegá tu CV para compararlo contra los avisos.', 'mal');
     return;
   }
-  if (!/^ *---+ *$/m.test(avisos)) {
+  if (!/^[ \t\r]*---+[ \t\r]*$/m.test(avisos)) {
     avisar('Separá los avisos con una línea de tres guiones (---).', 'mal');
     return;
   }

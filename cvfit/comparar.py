@@ -7,10 +7,36 @@ primero, la que es de una página.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from .cv import CV, parsear
 from .match import Resultado, evaluar
+
+# Una línea de tres guiones (con espacios o tabs alrededor, y `\r` si el texto viene de Windows).
+SEPARADOR_AVISOS = re.compile(r"(?m)^[ \t\r]*---+[ \t\r]*$")
+
+
+def separar_avisos(valor) -> list[str]:
+    """Los avisos vienen como lista o como un solo texto separado por líneas de `---`."""
+    if isinstance(valor, list):
+        partes = [parte for parte in valor if isinstance(parte, str)]
+    elif isinstance(valor, str):
+        partes = SEPARADOR_AVISOS.split(valor)
+    else:
+        partes = []
+    return [parte.strip() for parte in partes if parte.strip()]
+
+
+def _orden(resultado: Resultado, nombre: str) -> tuple:
+    """Más encaje, menos gaps excluyentes, más requisitos cubiertos. El nombre desempata."""
+    return (
+        -resultado.score,
+        not resultado.confiable,
+        len(resultado.faltantes),
+        -len(resultado.cubiertas),
+        nombre.lower(),
+    )
 
 
 @dataclass
@@ -21,14 +47,7 @@ class Candidato:
 
     @property
     def orden(self) -> tuple:
-        """Más encaje, menos gaps excluyentes, más requisitos cubiertos. El nombre desempata."""
-        return (
-            -self.resultado.score,
-            not self.resultado.confiable,
-            len(self.resultado.faltantes),
-            -len(self.resultado.cubiertas),
-            self.nombre.lower(),
-        )
+        return _orden(self.resultado, self.nombre)
 
 
 def comparar(cvs: dict[str, CV], aviso_texto: str) -> list[Candidato]:
@@ -52,13 +71,7 @@ class Oferta:
 
     @property
     def orden(self) -> tuple:
-        return (
-            -self.resultado.score,
-            not self.resultado.confiable,
-            len(self.resultado.faltantes),
-            -len(self.resultado.cubiertas),
-            self.nombre.lower(),
-        )
+        return _orden(self.resultado, self.nombre)
 
 
 def nombre_de_aviso(texto: str, posicion: int = 1) -> str:

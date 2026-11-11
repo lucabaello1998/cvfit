@@ -227,3 +227,43 @@ def test_cli_aviso_y_avisos_son_excluyentes(tmp_path):
 
     with pytest.raises(SystemExit):
         main(["--cv", str(cv), "--aviso", str(aviso), "--avisos", str(aviso)])
+
+
+def test_separar_avisos_acepta_crlf_y_espacios_alrededor():
+    from cvfit.comparar import separar_avisos
+
+    assert separar_avisos("Uno\r\n---\r\nDos") == ["Uno", "Dos"]
+    assert separar_avisos("Uno\n\t---  \nDos") == ["Uno", "Dos"]
+    assert separar_avisos("Uno\n---") == ["Uno"]
+
+
+def test_cli_parte_un_archivo_con_varios_avisos(tmp_path, capsys):
+    from cvfit.analizar import main
+
+    cv = tmp_path / "cv.md"
+    cv.write_text(_cv("React", "TypeScript"), encoding="utf-8")
+    avisos = tmp_path / "avisos.txt"
+    avisos.write_text(
+        _aviso("Dev React SSR", "React", "TypeScript") + "\r\n---\r\n" + _aviso("Dev Java SSR", "Java", "Kafka"),
+        encoding="utf-8",
+    )
+    salida = tmp_path / "cv.html"
+
+    codigo = main(["--cv", str(cv), "--avisos", str(avisos), "--salida", str(salida)])
+
+    assert codigo == 0
+    impreso = capsys.readouterr().out
+    assert "cv.md contra 2 avisos" in impreso
+    assert "conviene: Dev React SSR" in impreso
+
+
+def test_conviene_avisa_cuando_el_primero_es_orientativo(tmp_path, capsys):
+    from cvfit.analizar import main
+
+    cv = tmp_path / "cv.md"
+    cv.write_text(_cv("React"), encoding="utf-8")
+    aviso = tmp_path / "aviso.txt"
+    aviso.write_text(_aviso("Dev React corto", "React"), encoding="utf-8")
+
+    assert main(["--cv", str(cv), "--avisos", str(aviso), "--salida", str(tmp_path / "cv.html")]) == 0
+    assert "conviene: Dev React corto (orientativo)" in capsys.readouterr().out

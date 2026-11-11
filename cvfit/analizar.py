@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import __version__
 from .adaptar import adaptar
-from .comparar import comparar, comparar_avisos, nombrar_avisos
+from .comparar import comparar, comparar_avisos, nombrar_avisos, separar_avisos
 from .cv import cargar, parsear
 from .extraer import ExtraccionError, estructurar, extraer_desde_archivo
 from .pdf import PdfError, a_pdf
@@ -157,8 +157,8 @@ def main(argv: list[str] | None = None) -> int:
         textos = []
         for ruta in args.avisos:
             try:
-                textos.append(ruta.read_text(encoding="utf-8"))
-            except OSError as error:
+                textos.extend(separar_avisos(ruta.read_text(encoding="utf-8")))
+            except (OSError, UnicodeDecodeError) as error:
                 print(f"salteado {ruta.name}: {error}", file=sys.stderr)
         if not textos:
             print("no pude leer ninguno de los avisos", file=sys.stderr)
@@ -168,7 +168,8 @@ def main(argv: list[str] | None = None) -> int:
         ofertas = comparar_avisos(cv, nombrar_avisos(textos))
         print(f"\n{nombre_cv} contra {len(ofertas)} avisos\n")
         print(_tabla(ofertas, "aviso"))
-        print(f"\nconviene: {ofertas[0].nombre}")
+        marca = " (orientativo)" if not ofertas[0].resultado.confiable else ""
+        print(f"\nconviene: {ofertas[0].nombre}{marca}")
         aviso = ofertas[0].texto
         resultado = ofertas[0].resultado
         base = cv

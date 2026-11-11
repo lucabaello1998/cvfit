@@ -135,6 +135,8 @@ ofertas por lo que tu CV puede respaldar de cada una:
 cvfit --cv ejemplos/cv.md --avisos aviso-react.txt aviso-java.txt aviso-qa.txt
 ```
 
+Un archivo también puede traer varios avisos separados por `---`: se parte igual que en la web.
+
 ```
 cv.md contra 3 avisos
 
@@ -144,7 +146,7 @@ cv.md contra 3 avisos
  2  Dev React SSR — Remoto                      93%         5/6  —
  3  Dev Backend Java SSR — Remoto                0%         0/4  AWS, Java, Kafka, Spring
 
-conviene: Analista QA SSR
+conviene: Analista QA SSR (orientativo)
 ```
 
 El nombre de cada aviso sale de su primera línea, así el ranking se lee sin abrir nada. El de mejor
@@ -352,7 +354,8 @@ levantan en un puerto libre y se llaman como lo haría la interfaz: revisión co
 nombre saneado, caída sin navegador y 404. La comparación de varios CVs mantiene los suyos: orden,
 desempate, un archivo ilegible que no tumba la corrida y el ganador escrito por la CLI. El ranking
 inverso también: orden por encaje, nombre sacado de la primera línea, dos avisos que empiezan igual
-sin pisarse, y la CLI negándose a mezclar varios CV con varios avisos. Los retoques también: que una
+sin pisarse, un archivo con varios avisos separados por `---` (aunque vengan con fin de línea de
+Windows) y la CLI negándose a mezclar varios CV con varios avisos. Los retoques también: que una
 foto que no es imagen se descarte, que un color inválido no llegue al CSS y que la escala se recorte
 a un rango usable.
 

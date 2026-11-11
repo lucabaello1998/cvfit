@@ -189,6 +189,7 @@ def test_separar_avisos_corta_por_lineas_de_guiones():
 
     partes = separar_avisos("Uno\nExcluyente: React\n---\nDos\n  ---  \n\n---\nTres")
     assert partes == ["Uno\nExcluyente: React", "Dos", "Tres"]
+    assert separar_avisos("Uno\r\n---\r\nDos") == ["Uno", "Dos"]
     assert separar_avisos(["uno", 3, "   "]) == ["uno"]
     assert separar_avisos("") == []
     assert separar_avisos(42) == []
