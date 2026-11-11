@@ -1,5 +1,7 @@
 # cvfit
 
+[![Release](https://img.shields.io/github/v/release/lucabaello1998/cvfit?label=release)](https://github.com/lucabaello1998/cvfit/releases/latest)
+
 **Arrastrás tu CV (PDF, Word o Markdown) y pegás el aviso. Te dice cuánto de ese aviso podés
 respaldar, qué te falta, qué arreglaría un reclutador en tu CV, y te devuelve el CV adaptado en
 PDF — sin inventar una sola línea.**
