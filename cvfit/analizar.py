@@ -1,4 +1,7 @@
-"""CLI: analizar un CV contra un aviso y escribir el CV adaptado."""
+"""CLI: analizar un CV contra un aviso y escribir el CV adaptado.
+
+Tres modos: un CV contra un aviso, varios CV contra el mismo aviso, y un CV contra varios avisos.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +12,7 @@ from pathlib import Path
 
 from . import __version__
 from .adaptar import adaptar
-from .comparar import comparar
+from .comparar import comparar, comparar_avisos, nombrar_avisos
 from .cv import cargar, parsear
 from .extraer import ExtraccionError, estructurar, extraer_desde_archivo
 from .pdf import PdfError, a_pdf
@@ -48,7 +51,6 @@ def _revision_texto(revision) -> str:
     return "\n".join(lineas)
 
 
-
 def leer_cv(ruta):
     """Acepta .md/.txt/.docx/.pdf. Un PDF se estructura a Markdown antes de parsear."""
     if ruta.suffix.lower() == ".pdf":
@@ -58,10 +60,10 @@ def leer_cv(ruta):
     return cargar(ruta)
 
 
-def _tabla(filas) -> str:
+def _tabla(filas, etiqueta: str = "CV") -> str:
     """Ranking en texto: sin dependencias, alineado a ojo."""
     ancho_nombre = max(len(fila.nombre) for fila in filas) + 2
-    encabezado = f"{'#':>2}  {'CV':<{ancho_nombre}}{'encaje':>7}  {'respaldados':>11}  gaps excluyentes"
+    encabezado = f"{'#':>2}  {etiqueta:<{ancho_nombre}}{'encaje':>7}  {'respaldados':>11}  gaps excluyentes"
     lineas = [encabezado, "-" * len(encabezado)]
     for posicion, fila in enumerate(filas, start=1):
         resultado = fila.resultado
@@ -72,6 +74,28 @@ def _tabla(filas) -> str:
             f"{posicion:>2}  {fila.nombre:<{ancho_nombre}}{str(resultado.score) + '%':>7}  {respaldados:>11}  {gaps}{marca}"
         )
     return "\n".join(lineas)
+
+
+def _resumen(resultado, adaptado) -> None:
+    """El bloque de siempre: encaje, respaldados, gaps y cambios."""
+    print(f"\n{resultado.score}% — {VEREDICTOS[resultado.veredicto]}")
+    if not resultado.confiable:
+        print("(orientativo: el aviso tiene pocos requisitos reconocibles)")
+    print(
+        f"\nrespaldados ({len(resultado.cubiertas)}/{resultado.total_requisitos}): {', '.join(resultado.cubiertas) or '—'}"
+    )
+    if resultado.faltantes:
+        print(f"excluyentes que faltan: {', '.join(resultado.faltantes)}")
+    if resultado.blandas_faltantes:
+        print(f"deseables que faltan:   {', '.join(resultado.blandas_faltantes)}")
+    if resultado.observaciones:
+        print("\nantes de postularte:")
+        for observacion in resultado.observaciones:
+            print(f"  · {observacion}")
+    if adaptado.cambios:
+        print("\ndistinto en el CV:")
+        for cambio in adaptado.cambios:
+            print(f"  · {cambio}")
 
 
 def _consola_tolerante() -> None:
@@ -91,7 +115,14 @@ def main(argv: list[str] | None = None) -> int:
         nargs="+",
         help="uno o varios CV (.md, .txt, .docx o .pdf); con varios se comparan contra el mismo aviso",
     )
-    parser.add_argument("--aviso", required=True, type=Path, help="texto del aviso")
+    avisos = parser.add_mutually_exclusive_group(required=True)
+    avisos.add_argument("--aviso", type=Path, help="texto del aviso")
+    avisos.add_argument(
+        "--avisos",
+        type=Path,
+        nargs="+",
+        help="varios avisos: con un solo CV, dice a cuál conviene postular primero",
+    )
     parser.add_argument("--estilo", default="ats", choices=sorted(NOMBRES))
     parser.add_argument("--foto", type=Path, help="foto de perfil (.png, .jpg o .webp) para el encabezado")
     parser.add_argument("--acento", help="color de acento en hex, por ejemplo #1f5f8b")
@@ -119,38 +150,43 @@ def main(argv: list[str] | None = None) -> int:
         print("no pude leer ninguno de los CV", file=sys.stderr)
         return 2
 
-    aviso = args.aviso.read_text(encoding="utf-8")
-    filas = comparar(cvs, aviso)
-    ganadora = filas[0]
+    if args.avisos:
+        if len(cvs) > 1:
+            print("con --avisos va un solo CV: es un CV contra varios avisos", file=sys.stderr)
+            return 2
+        textos = []
+        for ruta in args.avisos:
+            try:
+                textos.append(ruta.read_text(encoding="utf-8"))
+            except OSError as error:
+                print(f"salteado {ruta.name}: {error}", file=sys.stderr)
+        if not textos:
+            print("no pude leer ninguno de los avisos", file=sys.stderr)
+            return 2
 
-    if len(filas) > 1:
-        print(f"\ncomparando {len(filas)} CVs contra el mismo aviso\n")
-        print(_tabla(filas))
-        print(f"\ngana: {ganadora.nombre}")
+        nombre_cv, cv = next(iter(cvs.items()))
+        ofertas = comparar_avisos(cv, nombrar_avisos(textos))
+        print(f"\n{nombre_cv} contra {len(ofertas)} avisos\n")
+        print(_tabla(ofertas, "aviso"))
+        print(f"\nconviene: {ofertas[0].nombre}")
+        aviso = ofertas[0].texto
+        resultado = ofertas[0].resultado
+        base = cv
+        adaptado = adaptar(cv, aviso)
+    else:
+        aviso = args.aviso.read_text(encoding="utf-8")
+        filas = comparar(cvs, aviso)
+        ganadora = filas[0]
+        if len(filas) > 1:
+            print(f"\ncomparando {len(filas)} CVs contra el mismo aviso\n")
+            print(_tabla(filas))
+            print(f"\ngana: {ganadora.nombre}")
+        resultado = ganadora.resultado
+        base = ganadora.cv
+        adaptado = adaptar(base, aviso)
 
-    resultado = ganadora.resultado
-    adaptado = adaptar(ganadora.cv, aviso)
-
-    print(f"\n{resultado.score}% — {VEREDICTOS[resultado.veredicto]}")
-    if not resultado.confiable:
-        print("(orientativo: el aviso tiene pocos requisitos reconocibles)")
-    print(
-        f"\nrespaldados ({len(resultado.cubiertas)}/{resultado.total_requisitos}): {', '.join(resultado.cubiertas) or '—'}"
-    )
-    if resultado.faltantes:
-        print(f"excluyentes que faltan: {', '.join(resultado.faltantes)}")
-    if resultado.blandas_faltantes:
-        print(f"deseables que faltan:   {', '.join(resultado.blandas_faltantes)}")
-    if resultado.observaciones:
-        print("\nantes de postularte:")
-        for observacion in resultado.observaciones:
-            print(f"  · {observacion}")
-    if adaptado.cambios:
-        print("\ndistinto en el CV:")
-        for cambio in adaptado.cambios:
-            print(f"  · {cambio}")
-
-    print(_revision_texto(revisar(ganadora.cv, args.estilo)))
+    _resumen(resultado, adaptado)
+    print(_revision_texto(revisar(base, args.estilo)))
 
     if args.salida:
         html = render(adaptado, args.estilo, foto=foto, acento=args.acento, escala=args.escala)

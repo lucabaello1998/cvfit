@@ -184,6 +184,46 @@ def test_pdf_sin_navegador_es_503(base, monkeypatch):
     assert b"Chrome ni Edge" in datos
 
 
+def test_separar_avisos_corta_por_lineas_de_guiones():
+    from cvfit.servidor import separar_avisos
+
+    partes = separar_avisos("Uno\nExcluyente: React\n---\nDos\n  ---  \n\n---\nTres")
+    assert partes == ["Uno\nExcluyente: React", "Dos", "Tres"]
+    assert separar_avisos(["uno", 3, "   "]) == ["uno"]
+    assert separar_avisos("") == []
+    assert separar_avisos(42) == []
+
+
+def test_comparar_avisos_ordena_por_encaje(base):
+    avisos = AVISO + "\n---\nBuscamos Backend Java.\nExcluyente: Java, Spring y Kafka.\n"
+    estado, datos = json_de(base + "/api/comparar-avisos", {"cv": CV, "avisos": avisos})
+    assert estado == 200
+    assert len(datos["filas"]) == 2
+    assert datos["filas"][0]["score"] >= datos["filas"][1]["score"]
+    assert datos["filas"][0]["nombre"].startswith("Buscamos Desarrollador")
+    assert datos["filas"][0]["texto"].startswith("Buscamos Desarrollador")
+    assert all({"nombre", "score", "veredicto", "texto", "faltantes"} <= set(fila) for fila in datos["filas"])
+
+
+def test_comparar_avisos_tambien_acepta_una_lista(base):
+    avisos = [AVISO, "Buscamos Data Engineer.\nExcluyente: Python, Spark y Airflow."]
+    estado, datos = json_de(base + "/api/comparar-avisos", {"cv": CV, "avisos": avisos})
+    assert estado == 200
+    assert len(datos["filas"]) == 2
+
+
+def test_comparar_avisos_pide_al_menos_dos(base):
+    estado, datos = json_de(base + "/api/comparar-avisos", {"cv": CV, "avisos": AVISO})
+    assert estado == 400
+    assert "dos avisos" in datos["error"]
+
+
+def test_comparar_avisos_sin_cv_es_400(base):
+    estado, datos = json_de(base + "/api/comparar-avisos", {"cv": "", "avisos": AVISO + "\n---\n" + AVISO})
+    assert estado == 400
+    assert "falta el CV" in datos["error"]
+
+
 def test_analizar_sigue_funcionando(base):
     estado, datos = json_de(base + "/api/analizar", {"cv": CV, "aviso": AVISO})
     assert estado == 200

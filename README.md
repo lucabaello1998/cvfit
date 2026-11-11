@@ -45,6 +45,9 @@ CV.pdf|.docx|.md  +  aviso.txt  →  cobertura  →  gaps  →  revisión  →  
 ¿Tenés varias versiones del CV? Se sueltan juntas contra el mismo aviso y sale el ranking de cuál
 encaja mejor — ver [Varios CVs contra el mismo aviso](#varios-cvs-contra-el-mismo-aviso).
 
+¿Tenés varios avisos? Se pegan separados por `---` y sale el ranking inverso: a cuál te conviene
+postular primero — ver [Un CV contra varios avisos](#un-cv-contra-varios-avisos).
+
 ### La regla que lo hace distinto
 
 Adaptar es **reordenar y resaltar**, no maquillar. Todo texto generado se valida contra el CV
@@ -122,6 +125,35 @@ El orden es: más cobertura ponderada, después menos gaps **excluyentes**, desp
 cubiertos. El mismo aviso se evalúa igual para todos, así que la comparación es honesta. Un archivo
 ilegible se saltea con el motivo en vez de tumbar la corrida.
 
+### Un CV contra varios avisos
+
+El ranking al revés, que es el que sirve para decidir **a qué postularse primero**. Pegás varias
+búsquedas separadas por una línea de `---`, apretás **Comparar varios avisos** y cvfit ordena las
+ofertas por lo que tu CV puede respaldar de cada una:
+
+```bash
+cvfit --cv ejemplos/cv.md --avisos aviso-react.txt aviso-java.txt aviso-qa.txt
+```
+
+```
+cv.md contra 3 avisos
+
+ #  aviso                                     encaje  respaldados  gaps excluyentes
+-------------------------------------------------------------------------------------
+ 1  Analista QA SSR                             100%         3/3  —  (orientativo)
+ 2  Dev React SSR — Remoto                      93%         5/6  —
+ 3  Dev Backend Java SSR — Remoto                0%         0/4  AWS, Java, Kafka, Spring
+
+conviene: Analista QA SSR
+```
+
+El nombre de cada aviso sale de su primera línea, así el ranking se lee sin abrir nada. El de mejor
+encaje se carga solo en *El aviso* y el CV adaptado se genera contra ese; con **usar** cambiás de
+oferta sin volver a pegar nada. La fila `(orientativo)` avisa que el aviso tiene menos de cuatro
+requisitos reconocibles: el porcentaje se calculó con poco texto.
+
+![Tu CV contra varios avisos](docs/capturas/ofertas-1440.png)
+
 ### Por consola
 
 ```bash
@@ -131,6 +163,9 @@ cvfit --cv ~/Downloads/CV.pdf --aviso aviso.txt --estilo ats --salida cv.pdf
 # con retoques
 cvfit --cv CV.pdf --aviso aviso.txt --estilo clasico \
   --foto ~/fotos/perfil.jpg --acento "#0f766e" --escala 1.1 --salida cv.pdf
+
+# un CV contra varios avisos
+cvfit --cv CV.pdf --avisos aviso-react.txt aviso-java.txt aviso-qa.txt
 ```
 
 Desde un clon sin instalar, cambiá `cvfit` por `python -m cvfit.analizar`.
@@ -302,7 +337,7 @@ Un `.docx` exportado desde Word es la opción más confiable para un CV con dise
 ## Tests
 
 ```bash
-python -m pytest -q      # 105 tests
+python -m pytest -q      # 118 tests
 ```
 
 Cubren el parser, la detección de requisitos (incluidos los falsos positivos típicos: "reactiva" no
@@ -315,9 +350,11 @@ salir. El PDF se prueba con un navegador simulado (comando, banderas, timeout, s
 vez de verdad, con `skip` si la máquina no tiene Chrome ni Edge. Los endpoints del servidor se
 levantan en un puerto libre y se llaman como lo haría la interfaz: revisión con y sin CV, PDF con
 nombre saneado, caída sin navegador y 404. La comparación de varios CVs mantiene los suyos: orden,
-desempate, un archivo ilegible que no tumba la corrida y el ganador escrito por la CLI. Los retoques
-también: que una foto que no es imagen se descarte, que un color inválido no llegue al CSS y que la
-escala se recorte a un rango usable.
+desempate, un archivo ilegible que no tumba la corrida y el ganador escrito por la CLI. El ranking
+inverso también: orden por encaje, nombre sacado de la primera línea, dos avisos que empiezan igual
+sin pisarse, y la CLI negándose a mezclar varios CV con varios avisos. Los retoques también: que una
+foto que no es imagen se descarte, que un color inválido no llegue al CSS y que la escala se recorte
+a un rango usable.
 
 Las capturas del README se regeneran con `python captura.py`: levanta la app con el CV de ejemplo,
 calcula el estado con el motor real y la fotografía con Chrome headless.

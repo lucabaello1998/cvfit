@@ -40,3 +40,53 @@ def comparar(cvs: dict[str, CV], aviso_texto: str) -> list[Candidato]:
 def comparar_textos(textos: dict[str, str], aviso_texto: str) -> list[Candidato]:
     """Igual que `comparar` pero desde Markdown o texto ya extraído (lo que usa el servidor)."""
     return comparar({nombre: parsear(texto) for nombre, texto in textos.items()}, aviso_texto)
+
+
+@dataclass
+class Oferta:
+    """Un aviso candidato para el mismo CV."""
+
+    nombre: str
+    texto: str
+    resultado: Resultado
+
+    @property
+    def orden(self) -> tuple:
+        return (
+            -self.resultado.score,
+            not self.resultado.confiable,
+            len(self.resultado.faltantes),
+            -len(self.resultado.cubiertas),
+            self.nombre.lower(),
+        )
+
+
+def nombre_de_aviso(texto: str, posicion: int = 1) -> str:
+    """Primera línea con contenido, recortada: es lo que se ve en el ranking."""
+    for linea in texto.splitlines():
+        limpia = linea.strip().lstrip("#").strip()
+        if limpia:
+            return limpia[:60] + ("…" if len(limpia) > 60 else "")
+    return f"Aviso {posicion}"
+
+
+def nombrar_avisos(textos: list[str]) -> dict[str, str]:
+    """Un nombre visible por aviso, sin pisarse aunque dos empiecen con la misma línea."""
+    nombrados: dict[str, str] = {}
+    for posicion, texto in enumerate(textos, start=1):
+        base = nombre_de_aviso(texto, posicion)
+        nombre = base
+        repetido = 2
+        while nombre in nombrados:
+            nombre = f"{base} ({repetido})"
+            repetido += 1
+        nombrados[nombre] = texto
+    return nombrados
+
+
+def comparar_avisos(cv: CV | str, avisos: dict[str, str]) -> list[Oferta]:
+    """El mismo CV contra varios avisos: a cuál conviene postular primero."""
+    if isinstance(cv, str):
+        cv = parsear(cv)
+    filas = [Oferta(nombre, texto, evaluar(cv, texto)) for nombre, texto in avisos.items()]
+    return sorted(filas, key=lambda fila: fila.orden)

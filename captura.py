@@ -16,12 +16,13 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from cvfit.adaptar import adaptar
+from cvfit.comparar import comparar_avisos, nombrar_avisos
 from cvfit.cv import parsear
 from cvfit.match import evaluar
 from cvfit.pdf import navegador
 from cvfit.plantillas import render
 from cvfit.revisar import CONSEJOS, GUIA_ESTILOS, revisar
-from cvfit.servidor import APP, Manejador
+from cvfit.servidor import APP, Manejador, fila_json
 
 RAIZ = Path(__file__).resolve().parent
 SALIDA = RAIZ / "docs" / "capturas"
@@ -30,6 +31,23 @@ AVISO = (
     "Desarrollador Fullstack SSR. Requisitos: React, Next.js, TypeScript, C#/.NET, SQL Server, "
     "tests automatizados y CI/CD. 3 anos de experiencia. Deseable: Docker y Azure."
 )
+OFERTAS = [
+    (
+        "Backend Java SSR — Remoto\n"
+        "Excluyente: Java, Spring Boot y Kafka. Deseable: AWS.\n"
+        "Cinco anos de experiencia, inglés B2."
+    ),
+    (
+        "Full-Stack SSR (React + .NET) — Remoto LatAm\n"
+        "Excluyente: React, TypeScript, .NET y SQL Server. Deseable: Azure y PostgreSQL.\n"
+        "Trabajo con producto, equipos chicos, CI/CD propio."
+    ),
+    (
+        "Analista QA SSR\n"
+        "Excluyente: Playwright, TypeScript, CI/CD y Selenium.\n"
+        "Testing automatizado de punta a punta."
+    ),
+]
 
 
 def _json(valor) -> str:
@@ -37,15 +55,18 @@ def _json(valor) -> str:
     return json.dumps(valor, ensure_ascii=False).replace("</", "<\\/")
 
 
-def estado_demo() -> dict:
+def estado_demo(aviso: str = AVISO, con_ofertas: bool = False) -> dict:
     cv_texto = (RAIZ / "ejemplos" / "cv.md").read_text(encoding="utf-8")
     cv = parsear(cv_texto)
-    resultado = evaluar(cv, AVISO)
-    adaptado = adaptar(cv, AVISO)
+    if con_ofertas:
+        ofertas = comparar_avisos(cv, nombrar_avisos(OFERTAS))
+        aviso = ofertas[0].texto
+    resultado = evaluar(cv, aviso)
+    adaptado = adaptar(cv, aviso)
     revision = revisar(cv, "ats")
-    return {
+    demo = {
         "cv": cv_texto,
-        "aviso": AVISO,
+        "aviso": aviso,
         "analisis": {
             "score": resultado.score,
             "veredicto": resultado.veredicto,
@@ -76,9 +97,19 @@ def estado_demo() -> dict:
         },
         "html": render(adaptado, "ats"),
     }
+    if con_ofertas:
+        demo["ofertas"] = [fila_json(oferta.nombre, oferta.resultado, oferta.texto) for oferta in ofertas]
+    return demo
 
 
-def pagina_demo(demo: dict) -> str:
+def pagina_demo(demo: dict, ofertas: bool = False) -> str:
+    extra = ""
+    if ofertas:
+        extra = (
+            "pintarOfertas(DEMO.ofertas);\n"
+            "$('panel-revision').classList.add('oculto');\n"
+            "abrirPestania('aviso');\n"
+        )
     inyeccion = (
         "<script>\n"
         "const DEMO = " + _json(demo) + ";\n"
@@ -91,8 +122,7 @@ def pagina_demo(demo: dict) -> str:
         "document.querySelector('.marco').classList.remove('vacio');\n"
         "marcarAcciones(true);\n"
         "pintarRevision(DEMO.revision);\n"
-        "$('bloque-consejos').open = true;\n"
-        "</script>\n"
+        "$('bloque-consejos').open = true;\n" + extra + "</script>\n"
     )
     marca = "</script>\n</body>"
     assert marca in APP, "cambió el cierre de la app"
@@ -100,12 +130,12 @@ def pagina_demo(demo: dict) -> str:
 
 
 class Demo(Manejador):
-    PAGINA = ""
+    PAGINAS: dict[str, str] = {}
     REVISION: dict = {}
 
     def do_GET(self) -> None:
-        if self.path in ("/", "/index.html"):
-            self._html(self.PAGINA)
+        if self.path in self.PAGINAS:
+            self._html(self.PAGINAS[self.path])
         else:
             super().do_GET()
 
@@ -122,15 +152,19 @@ def main() -> int:
 
     SALIDA.mkdir(parents=True, exist_ok=True)
     demo = estado_demo()
-    Demo.PAGINA = pagina_demo(demo)
+    Demo.PAGINAS = {
+        "/": pagina_demo(demo),
+        "/ofertas": pagina_demo(estado_demo(con_ofertas=True), ofertas=True),
+    }
     Demo.REVISION = demo["revision"]
     servidor = ThreadingHTTPServer(("127.0.0.1", PUERTO), Demo)
     hilo = threading.Thread(target=servidor.serve_forever, daemon=True)
     hilo.start()
     try:
-        for nombre, ancho, alto in (
-            ("revision-1440.png", 1440, 1500),
-            ("revision-900.png", 900, 1850),
+        for nombre, ancho, alto, ruta in (
+            ("revision-1440.png", 1440, 1500, "/"),
+            ("revision-900.png", 900, 1850, "/"),
+            ("ofertas-1440.png", 1440, 1180, "/ofertas"),
         ):
             destino = SALIDA / nombre
             proceso = subprocess.run(
@@ -145,7 +179,7 @@ def main() -> int:
                     f"--window-size={ancho},{alto}",
                     "--virtual-time-budget=3000",
                     f"--screenshot={destino}",
-                    f"http://127.0.0.1:{PUERTO}/",
+                    f"http://127.0.0.1:{PUERTO}{ruta}",
                 ],
                 capture_output=True,
                 text=True,

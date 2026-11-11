@@ -7,13 +7,14 @@ http://localhost:8765, se usa y se apaga.
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unicodedata import normalize
 
 from .adaptar import adaptar
-from .comparar import comparar_textos
+from .comparar import comparar_avisos, comparar_textos, nombrar_avisos
 from .cv import parsear
 from .extraer import ExtraccionError, desde_docx, desde_pdf, estructurar
 from .match import evaluar
@@ -24,6 +25,36 @@ from .revisar import CONSEJOS, GUIA_ESTILOS, revisar
 RAIZ = Path(__file__).resolve().parent.parent
 EJEMPLO = RAIZ / "ejemplos" / "cv.md"
 MAXIMO = 12 * 1024 * 1024
+SEPARADOR_AVISOS = re.compile(r"(?m)^[ \t]*---+[ \t]*$")
+
+
+def separar_avisos(valor) -> list[str]:
+    """Los avisos vienen como lista o como un solo texto separado por líneas de `---`."""
+    if isinstance(valor, list):
+        partes = [parte for parte in valor if isinstance(parte, str)]
+    elif isinstance(valor, str):
+        partes = SEPARADOR_AVISOS.split(valor)
+    else:
+        partes = []
+    return [parte.strip() for parte in partes if parte.strip()]
+
+
+def fila_json(nombre: str, resultado, texto: str | None = None) -> dict:
+    """Una fila del ranking, tanto para CVs como para avisos."""
+    fila = {
+        "nombre": nombre,
+        "score": resultado.score,
+        "veredicto": resultado.veredicto,
+        "confiable": resultado.confiable,
+        "total_requisitos": resultado.total_requisitos,
+        "cubiertas": resultado.cubiertas,
+        "faltantes": resultado.faltantes,
+        "blandas_faltantes": resultado.blandas_faltantes,
+    }
+    if texto is not None:
+        fila["texto"] = texto
+    return fila
+
 
 APP = """<!doctype html>
 <html lang="es-AR">
@@ -325,6 +356,10 @@ transition:opacity .18s,transform .18s}
 
       <div id="vista-aviso" class="oculto" role="tabpanel">
         <textarea id="aviso" rows="12" class="alta" placeholder="Pegá el texto completo de la oferta..."></textarea>
+        <div class="barra-cv">
+          <button id="comparar-avisos" class="mini" type="button" title="Pegá varios avisos separados por una línea de tres guiones">Comparar varios avisos</button>
+          <span class="ayuda">Separalos con <b>---</b> y te digo a cuál conviene postular primero.</span>
+        </div>
         <p class="ayuda">Cuanto más completo el aviso, mejor la detección de excluyentes.
         <span style="white-space:nowrap"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span> analiza sin tocar el mouse.</p>
       </div>
@@ -378,6 +413,12 @@ transition:opacity .18s,transform .18s}
       <div class="rotulo" style="margin-bottom:8px">Varios CVs contra el mismo aviso</div>
       <div class="ranking" id="ranking"></div>
       <p class="ayuda">El ganador se carga solo. "Usar" cambia la versión que vas a mandar.</p>
+    </section>
+
+    <section class="panel oculto" id="panel-ofertas">
+      <div class="rotulo" style="margin-bottom:8px">Tu CV contra varios avisos</div>
+      <div class="ranking" id="ofertas"></div>
+      <p class="ayuda">El de mejor encaje se carga solo. "Usar" cambia el aviso con el que vas a trabajar.</p>
     </section>
   </div>
 
@@ -523,23 +564,25 @@ async function cargarArchivos(lista) {
   }
 }
 
+function filaHtml(f, i, enUso) {
+  const meta = '<b>' + f.score + '%</b>' + (f.confiable ? '' : ' orientativo')
+    + ' · ' + f.cubiertas.length + '/' + f.total_requisitos + ' respaldados'
+    + (f.faltantes.length ? ' · <span class="falta">faltan ' + f.faltantes.map(escapar).join(', ') + '</span>' : '');
+  return '<div class="r-fila' + (i === 0 ? ' gana' : '') + '">'
+    + '<div class="r-pos">' + (i + 1) + '</div>'
+    + '<div class="r-info">'
+    + '<div class="r-nombre" title="' + escapar(f.nombre) + '">' + escapar(f.nombre) + '</div>'
+    + '<div class="r-meta" title="' + escapar(f.faltantes.join(', ')) + '">' + meta + '</div>'
+    + '</div>'
+    + '<button class="mini" type="button" data-i="' + i + '"'
+    + (enUso ? ' disabled' : '') + '>' + (enUso ? 'en uso' : 'usar') + '</button>'
+    + '</div>';
+}
+
 function pintarRanking(filas) {
   filasActuales = filas;
   $('panel-ranking').classList.remove('oculto');
-  $('ranking').innerHTML = filas.map((f, i) => {
-    const meta = '<b>' + f.score + '%</b>' + (f.confiable ? '' : ' orientativo')
-      + ' · ' + f.cubiertas.length + '/' + f.total_requisitos + ' respaldados'
-      + (f.faltantes.length ? ' · <span class="falta">faltan ' + f.faltantes.map(escapar).join(', ') + '</span>' : '');
-    return '<div class="r-fila' + (i === 0 ? ' gana' : '') + '">'
-      + '<div class="r-pos">' + (i + 1) + '</div>'
-      + '<div class="r-info">'
-      + '<div class="r-nombre" title="' + escapar(f.nombre) + '">' + escapar(f.nombre) + '</div>'
-      + '<div class="r-meta" title="' + escapar(f.faltantes.join(', ')) + '">' + meta + '</div>'
-      + '</div>'
-      + '<button class="mini" type="button" data-i="' + i + '"'
-      + (i === indiceEnUso ? ' disabled' : '') + '>' + (i === indiceEnUso ? 'en uso' : 'usar') + '</button>'
-      + '</div>';
-  }).join('');
+  $('ranking').innerHTML = filas.map((f, i) => filaHtml(f, i, i === indiceEnUso)).join('');
 }
 
 async function compararCargados() {
@@ -582,6 +625,59 @@ $('ranking').addEventListener('click', async evento => {
   avisar('Usando ' + elegido.nombre + '.');
 });
 
+// --- un CV contra varios avisos: el ranking inverso ---
+let ofertasActuales = [];
+let ofertaEnUso = 0;
+
+function pintarOfertas(filas) {
+  ofertasActuales = filas;
+  $('panel-ofertas').classList.remove('oculto');
+  $('ofertas').innerHTML = filas.map((f, i) => filaHtml(f, i, i === ofertaEnUso)).join('');
+}
+
+async function compararAvisos() {
+  const cv = $('cv').value.trim();
+  const avisos = $('aviso').value.trim();
+  if (!cv) {
+    abrirPestania('cv');
+    avisar('Pegá tu CV para compararlo contra los avisos.', 'mal');
+    return;
+  }
+  if (!/^ *---+ *$/m.test(avisos)) {
+    avisar('Separá los avisos con una línea de tres guiones (---).', 'mal');
+    return;
+  }
+  avisar('Comparando tu CV contra los avisos…');
+  const r = await fetch('/api/comparar-avisos', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cv: cv, avisos: avisos})
+  });
+  const datos = await r.json().catch(() => ({}));
+  if (!r.ok) { avisar(datos.error || 'No pude comparar los avisos.', 'mal'); return; }
+
+  ofertaEnUso = 0;
+  $('aviso').value = datos.filas[0].texto;
+  contar();
+  guardarSesion();
+  pintarOfertas(datos.filas);
+  await actualizar(true);
+  avisar('Conviene «' + datos.filas[0].nombre + '» con ' + datos.filas[0].score + '%.', 'ok');
+}
+
+$('comparar-avisos').onclick = compararAvisos;
+
+$('ofertas').addEventListener('click', async evento => {
+  const boton = evento.target.closest('button[data-i]');
+  if (!boton || boton.disabled) return;
+  ofertaEnUso = Number(boton.dataset.i);
+  $('aviso').value = ofertasActuales[ofertaEnUso].texto;
+  contar();
+  guardarSesion();
+  pintarOfertas(ofertasActuales);
+  await actualizar(true);
+  avisar('Usando «' + ofertasActuales[ofertaEnUso].nombre + '».');
+});
+
 $('archivo').onchange = evento => cargarArchivos(evento.target.files);
 const zona = $('zona');
 zona.addEventListener('dragover', evento => { evento.preventDefault(); zona.classList.add('encima'); });
@@ -595,11 +691,16 @@ zona.addEventListener('drop', evento => {
 $('cv').addEventListener('input', () => {
   cargados = [];
   $('panel-ranking').classList.add('oculto');
+  $('panel-ofertas').classList.add('oculto');
   contar();
   programarRevision();
   programarGuardado();
 });
-$('aviso').addEventListener('input', () => { contar(); programarGuardado(); });
+$('aviso').addEventListener('input', () => {
+  $('panel-ofertas').classList.add('oculto');
+  contar();
+  programarGuardado();
+});
 
 // --- resultado ---
 function pintar(r) {
@@ -1009,6 +1110,9 @@ $('limpiar').onclick = () => {
   cargados = [];
   indiceEnUso = 0;
   $('panel-ranking').classList.add('oculto');
+  ofertasActuales = [];
+  ofertaEnUso = 0;
+  $('panel-ofertas').classList.add('oculto');
   fotoData = '';
   $('miniatura').src = '';
   $('miniatura').classList.add('oculto');
@@ -1237,23 +1341,24 @@ class Manejador(BaseHTTPRequestHandler):
                 self._json(400, {"error": "falta el texto del aviso"})
                 return
             filas = comparar_textos(textos, aviso_texto)
+            self._json(200, {"filas": [fila_json(fila.nombre, fila.resultado) for fila in filas]})
+            return
+
+        if ruta == "/api/comparar-avisos":
+            avisos = separar_avisos(datos.get("avisos"))
+            if len(avisos) < 2:
+                self._json(
+                    400,
+                    {"error": "hacen falta al menos dos avisos: separalos con una línea de ---"},
+                )
+                return
+            if not cv_texto:
+                self._json(400, {"error": "falta el CV para comparar los avisos"})
+                return
+            ofertas = comparar_avisos(cv_texto, nombrar_avisos(avisos))
             self._json(
                 200,
-                {
-                    "filas": [
-                        {
-                            "nombre": fila.nombre,
-                            "score": fila.resultado.score,
-                            "veredicto": fila.resultado.veredicto,
-                            "confiable": fila.resultado.confiable,
-                            "total_requisitos": fila.resultado.total_requisitos,
-                            "cubiertas": fila.resultado.cubiertas,
-                            "faltantes": fila.resultado.faltantes,
-                            "blandas_faltantes": fila.resultado.blandas_faltantes,
-                        }
-                        for fila in filas
-                    ]
-                },
+                {"filas": [fila_json(oferta.nombre, oferta.resultado, oferta.texto) for oferta in ofertas]},
             )
             return
 
